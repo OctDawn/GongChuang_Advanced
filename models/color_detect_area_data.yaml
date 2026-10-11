@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 12
+names: ['black', 'blue', 'brown', 'deep_blue', 'deep_green', 'green', 'orange', 'pink', 'purple', 'red', 'white', 'yellow']
+
+roboflow:
+  workspace: lijun-mzcyb
+  project: color_detect_area
+  version: 6
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/lijun-mzcyb/color_detect_area/dataset/6

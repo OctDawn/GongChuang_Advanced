@@ -1,0 +1,21 @@
+[Unit]
+Description=Mihomo proxy for Wave Vision (LLM 出口代理)
+# 需要先有外网才能拉订阅；已有缓存时断网也能启动
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orangepi
+Group=orangepi
+# 二进制与配置目录按实际修改（本项目部署在 /home/orangepi/mihomo）
+WorkingDirectory=/home/orangepi/mihomo
+ExecStart=/home/orangepi/mihomo/mihomo -d /home/orangepi/mihomo
+Restart=always
+RestartSec=5
+LimitNOFILE=100000
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

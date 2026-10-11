@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 16
+names: ['ball', 'cone', 'cube', 'cuboid', 'cylinder', 'cylinder_thinWalled', 'hemisphere', 'parallelepiped', 'prism3', 'prism3_thinWalled', 'prism4_thinWalled', 'prism5', 'prism5_thinWalled', 'prism6', 'pyramid3', 'pyramid4']
+
+roboflow:
+  workspace: lijun-mzcyb
+  project: shape_detect_area
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/lijun-mzcyb/shape_detect_area/dataset/5

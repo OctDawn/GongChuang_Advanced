@@ -1,0 +1,22 @@
+[Unit]
+Description=HDMI link watchdog (显示屏偶发整屏玫红时自动重同步)
+After=graphical.target
+Wants=graphical.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=orangepi
+Group=orangepi
+WorkingDirectory=/home/orangepi/WaveRider_GongChuang_Vision
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/orangepi/.Xauthority
+# 只用标准库，不需要 conda；屏每次重新握手（断电/唤醒）就主动重同步一次输出
+ExecStart=/bin/bash -c 'mkdir -p logs && exec /usr/bin/python3 -u tools/hdmi_watch.py --log logs/hdmi_watch.log --interval 2 --force-mode 1920x1080 --force-rgb'
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

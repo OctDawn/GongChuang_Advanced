@@ -1,0 +1,17 @@
+# 强制 shell 脚本在任意平台都用 LF：CRLF 的 .sh 在板上会报
+# "/usr/bin/env: 'bash\r': No such file or directory"。
+*.sh text eol=lf
+
+# 其余文本文件按仓库既有习惯处理（避免整仓被重写行尾）
+*.py  text
+*.md  text
+*.yaml text
+*.yml text
+*.json text
+*.cfg text
+*.txt text
+*.env.example text
+
+# 开发在 Windows、运行在 Linux(香橙派)：仓库与检出统一 LF，
+# 否则 .sh / .service 带 CRLF 上板会出问题（systemd unit、EnvironmentFile 都怕 \r）
+* text=auto eol=lf

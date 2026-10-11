@@ -1,0 +1,31 @@
+[Unit]
+Description=Wave Vision Classification System (LLM / Qwen-VL)
+After=graphical.target mihomo.service
+Wants=graphical.target mihomo.service
+# 冷启动时摄像头枚举可能偏慢，需要无限次重启；
+# systemd 默认「10 秒内失败 5 次就放弃」，这里关掉这个限流。
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=orangepi
+Group=orangepi
+# 仓库路径按实际修改
+WorkingDirectory=/home/orangepi/WaveRider_GongChuang_Vision
+# .env 注入密钥 + 代理三行（systemd 不读 .bashrc，代理必须在 .env 里）
+EnvironmentFile=/home/orangepi/WaveRider_GongChuang_Vision/.env
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/orangepi/.Xauthority
+# 启动包装：先等两个摄像头节点与代理端口就绪，再拉起主程序
+ExecStart=/bin/bash /home/orangepi/WaveRider_GongChuang_Vision/deploy/start_vision.sh
+# 主程序捕获摄像头/串口故障后可能「正常退出」，所以正常退出也要重启
+Restart=always
+RestartSec=5
+# 用 SIGINT 停（等同 Ctrl-C），让程序跑完清理逻辑释放摄像头与录像文件
+KillSignal=SIGINT
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,35 @@
+# Mihomo 代理配置示例（复制到 ~/mihomo/config.yaml 后使用）
+#
+# 用途：给板子提供稳定的 HTTP 代理出口，供 main_llm.py 访问 OpenRouter。
+# 部署步骤见 README「运行环境」一节；systemd 单元见 deploy/mihomo.service。
+#
+# ⚠️ 把 url 换成自己的订阅链接后再用，并且**不要把真实链接提交进仓库**
+#    （订阅链接等同于账号密码）。
+
+mixed-port: 7890              # 本地 HTTP/SOCKS 混合端口，HTTPS_PROXY 指向它
+allow-lan: false
+mode: rule
+log-level: warning
+external-controller: 127.0.0.1:9097   # 用 curl http://127.0.0.1:9097/proxies 查看当前节点
+
+proxy-providers:
+  ikuuu:
+    type: http
+    url: 
+    path: ./ikuuu.yaml        # 订阅缓存（首次下载后离线也能用）
+    interval: 86400
+    # 关键：OpenRouter 对 OpenAI 系模型有地区门禁——
+    # 实测 HK / MO 节点会被 403（This model is not available in your region），
+    # 美国节点正常。这里只保留美国节点，避免节点漂移导致识别整轮回落 YOLO。
+    filter: "(?i)美国|US|United States|🇺🇸|洛杉矶|圣何塞|西雅图|纽约|Los Angeles|San Jose|Seattle|New York"
+
+proxy-groups:
+  - name: PROXY
+    type: url-test            # 在候选节点里自动挑延迟最低的
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    use: [ikuuu]
+
+rules:
+  # 只要把所有流量都交给代理即可（板子只需访问 OpenRouter）
+  - MATCH,PROXY

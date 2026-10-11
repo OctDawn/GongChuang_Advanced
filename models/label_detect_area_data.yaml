@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 11
+names: ['barcode', 'blank_paper', 'checker', 'cross', 'dots', 'qrcode', 'ring', 'star', 'stripe', 'text', 'triangle']
+
+roboflow:
+  workspace: lijun-mzcyb
+  project: label_detect_area
+  version: 4
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/lijun-mzcyb/label_detect_area/dataset/4

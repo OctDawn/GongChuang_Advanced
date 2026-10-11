@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 12
+names: ['black', 'blue', 'brown', 'deep_blue', 'deep_green', 'green', 'orange', 'pink', 'purple', 'red', 'white', 'yellow']
+
+roboflow:
+  workspace: lijun-mzcyb
+  project: color_large_pallet
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/lijun-mzcyb/color_large_pallet/dataset/2

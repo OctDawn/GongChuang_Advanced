@@ -1,0 +1,20 @@
+# Python 3.10
+# 运行依赖，不含 rknn 相关库（rknnlite 需在板端按厂商 SDK 安装）。
+
+opencv-python>=4.8    # cv2：摄像头采集、图像缩放与编码(imencode)
+pyserial>=3.5         # serial：串口通信
+numpy>=1.24,<2        # numpy：图像数组处理（<2 避免与 opencv 兼容问题，可按需放宽）
+openai>=1.0           # openai：调用 Qwen-VL（百炼兼容 OpenAI 接口）
+pygame>=2.0           # pygame：识别结果表格显示（shared/show.py）
+
+# ===== 贴纸解码（可选，按需安装；二维码用 OpenCV 自带，无需额外依赖） =====
+# 条码（一维）解码：zxing-cpp 纯 pip、无系统依赖，推荐；pyzbar 需要系统库 libzbar0
+zxing-cpp>=2.0        # 二维码 + 条码统一解码（decoder.py 优先使用）
+# pyzbar>=0.1.9       # 备选条码解码（apt install libzbar0）
+
+# 文字（OCR）解码：二选一即可
+#   pytesseract 需要系统 tesseract-ocr 及中文语言包（apt install tesseract-ocr tesseract-ocr-chi-sim）
+#   paddleocr 模型较大、首次运行会下载模型，板端内存吃紧时慎用
+# pytesseract>=0.3.10
+paddleocr>=3.0
+paddlepaddle>=3.0     # paddleocr 推理后端，需按板端 CPU 架构选择对应版本
