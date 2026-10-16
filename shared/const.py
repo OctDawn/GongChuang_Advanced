@@ -19,7 +19,18 @@ DETECT_AREA_LABEL_MODEL_PATH = "models/label_detect_area.rknn"
 
 # ================= 摄像头信息（两个后端共用） =================
 CAMERA_PALLET_ID = "/dev/v4l/by-id/usb-Generic_USB_Camera_200901010001-video-index0"   #大托盘上方广角摄像头
-CAMERA_DETECT_AREA_ID = "/dev/v4l/by-id/usb-RYS_USB_Camera_200901010001-video-index0"     #识别区摄像头
+# 识别区：三个固定机位（机械改造后不再旋转）
+#   ① ② 水平相对、各自向下倾斜约 45° 俯视（互补看到两侧竖直面）
+#   ③ 正下方仰视，看底面（薄壁开口 / 底部贴纸）
+# 名字由 /etc/udev/rules.d/70-wave-cameras.rules 固定：同款相机 by-id 会撞名（假序列号），
+# 所以一律用 /dev/wave/cam_* 别名，换 USB 口只改 udev 规则、不动代码。
+DETECT_CAMERA_IDS = (
+    os.environ.get("CAMERA_DETECT_1", "/dev/wave/cam_detect_1"),
+    os.environ.get("CAMERA_DETECT_2", "/dev/wave/cam_detect_2"),
+    os.environ.get("CAMERA_DETECT_3", "/dev/wave/cam_detect_3"),
+)
+DETECT_CAMERA_NAMES = ("识别区①斜上方", "识别区②斜上方(相对)", "识别区③正下方仰视")
+CAMERA_DETECT_AREA_ID = DETECT_CAMERA_IDS[0]   # 兼容旧引用（= 识别区①）
 PALLET_WIDTH = 1280
 PALLET_HEIGHT = 960
 PALLET_FPS = 30

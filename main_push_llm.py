@@ -31,7 +31,7 @@ import cv2
 
 from shared.const import (
     SERIAL_PORT, BAUDRATE, CAPTURE_DIR,
-    CAMERA_PALLET_ID, CAMERA_DETECT_AREA_ID,
+    CAMERA_PALLET_ID, DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES,
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
     MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY, STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
@@ -88,7 +88,7 @@ class PushController:
     阶段 3 显示回执，共享状态统一收在实例里。
     """
 
-    def __init__(self, label_runner, pallet_frame_queue, detect_area_frame_queue, send_queue,
+    def __init__(self, label_runner, pallet_frame_queue, detect_area_frame_queues, send_queue,
                  stage_two_requested, display_row_queue,
                  start_requested, column_check_requested, display_requested,
                  stop_event, video_dir, image_dir, run_name, pallet_fps, detect_area_fps,
@@ -97,7 +97,7 @@ class PushController:
         self.yolo_fallback = yolo_fallback
         self.empty_examples = empty_examples
         self.pallet_frame_queue = pallet_frame_queue
-        self.detect_area_frame_queue = detect_area_frame_queue
+        self.detect_area_frame_queues = tuple(detect_area_frame_queues)
         self.send_queue = send_queue
         self.stage_two_requested = stage_two_requested
         self.display_row_queue = display_row_queue
@@ -152,6 +152,7 @@ class PushController:
                 os.path.join(self.video_dir, f"{self.run_name}_large_pallet.mp4"),
                 cv2.VideoWriter_fourcc(*"mp4v"), self.pallet_fps, (w, h),
             )
+        # 只录识别区①（三路 720p 同时写 mp4 会明显抢 IO；要全录就再各建一个 writer）
         if self.detect_area_video_writer is None:
             h, w = detect_frame.shape[:2]
             self.detect_area_video_writer = cv2.VideoWriter(
@@ -168,7 +169,7 @@ class PushController:
             if self.stop_event.is_set():
                 raise CameraStopped()
             pallet_frame = get_frame(self.pallet_frame_queue, self.stop_event)
-            detect_frame = get_frame(self.detect_area_frame_queue, self.stop_event)
+            detect_frame = get_frame(self.detect_area_frame_queues[0], self.stop_event)
             if pallet_frame is None or detect_frame is None:
                 continue
             self.record_streams(pallet_frame, detect_frame)
@@ -254,28 +255,34 @@ class PushController:
         except queue.Empty:
             pass
 
-    # ---- 阶段 2：多角度拍照 + 单轮历史参考比对 ----
+    def _fresh_frame(self, frame_queue, name):
+        """取 a 之后拍到的最新一帧：先丢掉积压（a 之前或上一件的旧画面），再等新帧。
+
+        每路相机线程都以 maxsize=1 持续刷新，所以「丢一次 + 取一次」既保证画面新，
+        又不会等太久（约一个帧周期）。"""
+        while True:
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        return get_frame_retry(frame_queue, self.stop_event, name)
+
+    # ---- 阶段 2：三路固定机位一次拍齐 + 单轮历史参考比对 ----
     def run_stage_two(self):
         self.stage2_round += 1
         frames = []
 
-        # 第 1 张：a 已触发
-        frame = get_frame_retry(self.detect_area_frame_queue, self.stop_event, "识别区摄像头")
-        if frame is None:
-            raise CameraStopped()
-        frames.append(frame)
-        self.send_queue.put("r\n")
-
-        # 第 2~N 张：每次等 b（转向完成）
-        for i in range(1, STAGE_TWO_DETECTION_COUNT):
-            logger.info("等待 b (%d/%d)", i, STAGE_TWO_DETECTION_COUNT - 1)
-            wait_stage_two_signal(self.stage_two_requested, self.stop_event)
-            frame = get_frame_retry(self.detect_area_frame_queue, self.stop_event, "识别区摄像头")
+        # 机械改造：识别区不再旋转，a 一到就从三路各自取「最新一帧」（误差约 1 帧 ≈ 33ms）
+        if len(self.detect_area_frame_queues) != STAGE_TWO_DETECTION_COUNT:
+            logger.warning("识别区机位数(%d)与 STAGE_TWO_DETECTION_COUNT(%d) 不一致",
+                           len(self.detect_area_frame_queues), STAGE_TWO_DETECTION_COUNT)
+        for index, (frame_queue, name) in enumerate(
+                zip(self.detect_area_frame_queues, DETECT_CAMERA_NAMES), start=1):
+            frame = self._fresh_frame(frame_queue, name)
             if frame is None:
                 raise CameraStopped()
+            logger.info("阶段 2 取帧 %d/%d：%s", index, STAGE_TWO_DETECTION_COUNT, name)
             frames.append(frame)
-            if i < STAGE_TWO_DETECTION_COUNT - 1:
-                self.send_queue.put("r\n")
 
         # 原图交给后台线程落盘：写盘不再占用「拍完 → 发请求」的关键路径
         try:
@@ -458,9 +465,10 @@ def _run(empty_examples, shape_examples, fallback):
     image_dir = os.path.join(CAPTURE_DIR, "images", run_name)
 
     large_pallet_frame_queue = queue.Queue(maxsize=1)
-    detect_area_frame_queue = queue.Queue(maxsize=1)
     large_pallet_fps_queue = queue.Queue(maxsize=1)
-    detect_area_fps_queue = queue.Queue(maxsize=1)
+    # 识别区三路固定机位：每路一个「最新帧」队列（各由一个采集线程持续刷新）
+    detect_frame_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
+    detect_fps_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
     send_queue = queue.Queue()
     stage_two_requested = queue.Queue()
     display_row_queue = queue.Queue()
@@ -475,8 +483,11 @@ def _run(empty_examples, shape_examples, fallback):
     os.makedirs(os.path.join(image_dir, "original"), exist_ok=True)
 
     large_pallet_cap = initial_cap(CAMERA_PALLET_ID, "托盘上方广角摄像头", PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS)
-    detect_area_cap = initial_cap(CAMERA_DETECT_AREA_ID, "识别区摄像头", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
-    if large_pallet_cap is None or detect_area_cap is None:
+    detect_caps = [
+        initial_cap(camera_id, name, DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
+        for camera_id, name in zip(DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES)
+    ]
+    if large_pallet_cap is None or any(cap is None for cap in detect_caps):
         logger.error("摄像头初始化失败，程序退出")
         sys.exit(1)
 
@@ -486,12 +497,15 @@ def _run(empty_examples, shape_examples, fallback):
               large_pallet_fps_queue, stop_event, False),
         daemon=True,
     )
-    detect_area_camera = threading.Thread(
-        target=read_camera,
-        args=(detect_area_cap, "识别区摄像头", detect_area_frame_queue,
-              detect_area_fps_queue, stop_event, True),
-        daemon=True,
-    )
+    detect_cameras = [
+        threading.Thread(
+            target=read_camera,
+            args=(cap, name, frame_queue, fps_queue, stop_event, True),
+            daemon=True,
+        )
+        for cap, name, frame_queue, fps_queue in zip(
+            detect_caps, DETECT_CAMERA_NAMES, detect_frame_queues, detect_fps_queues)
+    ]
     serial_worker = threading.Thread(
         target=communicate_serial,
         args=(send_queue, stop_event, start_requested, stage_two_requested,
@@ -517,7 +531,8 @@ def _run(empty_examples, shape_examples, fallback):
         daemon=True,
     )
     large_pallet_camera.start()
-    detect_area_camera.start()
+    for thread in detect_cameras:
+        thread.start()
     serial_worker.start()
     display_worker.start()
 
@@ -536,7 +551,7 @@ def _run(empty_examples, shape_examples, fallback):
         if not pallet_fps or pallet_fps <= 0:
             pallet_fps = 25.0
         try:
-            detect_area_fps = detect_area_fps_queue.get(timeout=5.0)
+            detect_area_fps = detect_fps_queues[0].get(timeout=5.0)
         except queue.Empty:
             detect_area_fps = 25.0
         if not detect_area_fps or detect_area_fps <= 0:
@@ -544,7 +559,7 @@ def _run(empty_examples, shape_examples, fallback):
 
         controller = PushController(
             label_runner,
-            large_pallet_frame_queue, detect_area_frame_queue, send_queue,
+            large_pallet_frame_queue, detect_frame_queues, send_queue,
             stage_two_requested, display_row_queue,
             start_requested, column_check_requested, display_requested,
             stop_event,
@@ -560,7 +575,8 @@ def _run(empty_examples, shape_examples, fallback):
     finally:
         stop_event.set()
         large_pallet_camera.join(timeout=1)
-        detect_area_camera.join(timeout=1)
+        for thread in detect_cameras:
+            thread.join(timeout=1)
         serial_worker.join(timeout=1)
         display_worker.join(timeout=1)
         if controller is not None:
