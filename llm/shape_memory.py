@@ -15,7 +15,7 @@ class ShapeMemoryError(Exception):
 
 
 class ShapeMemory:
-    def __init__(self, parent, limit=12, view_count=4):
+    def __init__(self, parent, limit=12, view_count=3):
         if not 1 <= limit <= 32:
             raise ValueError("LLM_SHAPE_MEMORY_LIMIT 必须在 1~32 之间")
         self.limit = limit

@@ -3,7 +3,7 @@
 在 Orange Pi 5 Pro（RK3588S，Ubuntu 22.04）上运行视觉识别，通过串口与电控通信，由显示屏呈现分拣结果。
 
 - **当前唯一入口**：`main_push_llm.py`（视觉大模型识别，本地 NPU 仅作可选回落）
-- **启动方式**：`bash deploy/start_vision.sh`（带三道就绪门禁），或手动 `python main_push_llm.py`
+- **启动方式**：`bash deploy/start_vision.sh`（带四道就绪门禁），或手动 `python main_push_llm.py`
 - **开机自启**：`deploy/wave-vision-llm.service`（systemd）
 
 > 历史方案（**已归档，不再维护**）：`main_push_yolo.py`（纯 YOLO）、`main_laser_llm.py` + `shared/laser.py`（视觉替换激光传感器）、`main_grab.py`（早期抓取）、`agent/`（自主决策）。
@@ -14,6 +14,11 @@
 ## 更新记录
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
+
+**10/16 hrx**
+- 识别区改三路固定机位，取消 r/b 握手
+- 相机改 udev 物理口别名 cam_*
+- 四路相机拆两条总线解决带宽
 
 **10/9 hrx**
 - 网络/显示/自启三处加固，初赛完赛
@@ -152,7 +157,7 @@ GongChuang_Advanced/
 ├── llm/                         # 大模型层
 │   ├── qw.py                    # OpenAI 客户端：缓存模式、重试、图片编码
 │   ├── prompt.py                # 词表、提示词、纠错提示
-│   ├── shape_recognition.py     # 多视角识别、校验、形状登记
+│   ├── shape_recognition.py     # 三机位识别、校验、形状登记
 │   ├── shape_memory.py          # 本次运行的形状参考图库（3 视角拼图）
 │   ├── empty_examples.py        # 空场景图与带标签示例加载
 │   └── example/                 # 2 张空场景 + 7 张形状示例
@@ -177,7 +182,7 @@ GongChuang_Advanced/
 
 ## 当前流程
 
-双摄像头推送版，视觉只做识别与显示，机械/电控负责动作。
+四路相机推送版（托盘广角 1 + 识别区三路固定机位 3），视觉只做识别与显示，机械/电控负责动作。
 
 ### 串口协议
 
@@ -209,6 +214,54 @@ GongChuang_Advanced/
 - **串口线程**：独立收发，读写异常置位 `stop_event`。
 - **显示线程**：固定 7 行（6 类 + 末行「未归类」）；上电只铺纯黑，收到首个 `a`/`c` 才点亮。
 - **主线程**：阶段编排。任一上游故障 → 抛 `CameraStopped` → 清理退出；所有等待都带超时，不会永久阻塞。
+
+---
+
+## 相机与设备别名（udev）
+
+四路相机全部走 `/dev/wave/cam_*`，别名由 `/etc/udev/rules.d/70-wave-cameras.rules` 按
+**USB 物理口**绑定，代码里不再出现 `/dev/videoN`。
+
+| 别名 | 机位 | 物理口（`ID_PATH`） |
+| --- | --- | --- |
+| `cam_pallet` | 托盘上方广角（1280×960） | `platform-fc800000.usb-usb-0:1.2:1.0` |
+| `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc800000.usb-usb-0:1.1:1.0` |
+| `cam_detect_2` | 识别区② 斜上方（与①相对） | `platform-fc880000.usb-usb-0:1.3:1.0` |
+| `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` |
+
+规则要点（都是踩过的坑）：
+
+- **不用 `by-id`**：两台相机 `0bda:9143` 的假序列号都是 `200901010001`，`by-id` 名字直接撞车，
+  其中一台干脆没有 `by-id` 名字。
+- **属性必须写成 `ENV{ID_PATH}`**：写成 `ID_PATH=="…"` 会被 udev 判成 `Invalid key`，
+  **静默丢弃整条规则**（不报错，只是别名一直不出现）。
+- **必须加 `ATTR{index}=="0"`**：每台 UVC 相机同时暴露 `index0`（采集）与 `index1`（metadata），
+  两者 `ID_PATH` 相同；不加判断别名会被后一个覆盖，指过去打不开。
+
+### 带宽：四路是 2+2 分的，别再插回同一个 Hub
+
+四路相机分在**两条独立总线**上（`platform-fc800000.usb` 与 `platform-fc880000.usb`），
+每条（480M）只放得下 **2 路** MJPG 流。第 3 路 `STREAMON` 会直接失败，dmesg 报
+`Failed to submit URB 0 (-28)`（`-28` = `ENOSPC` = 等时带宽不足，**不是供电问题**）。
+
+### 换 USB 口 / 换相机后怎么做
+
+```bash
+# 1) 看现在谁在哪条总线、每个节点的物理口
+for v in /dev/video*; do echo "== $v"; readlink -f /sys/class/video4linux/$(basename $v)/device; done
+# 2) 拿到 ID_PATH（udev 规则就是按它匹配的）
+for v in 0 2 4 6; do printf "video%s  " $v; udevadm info -q property -n /dev/video$v | grep '^ID_PATH='; done
+# 3) 按新 ID_PATH 改 /etc/udev/rules.d/70-wave-cameras.rules，然后
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=video4linux --action=add
+# 4) 验收：四个别名要指向真实采集节点（index0）
+ls -l /dev/wave/
+python tools/probe_cameras.py     # 走别名，四路 90/90 才算过
+```
+
+> ⚠️ 图号 ↔ 机位是**写死在 prompt 里的契约**（图1=①斜上、图2=②斜上、图3=正下仰视）。
+> 换相机请把它装到目标机位、插到该机位别名对应的 USB 口，**别随手对调插头**。
+> 拔插不需要 reload 规则（规则没变），只有改了规则文件内容才要 reload。
 
 ---
 
@@ -320,7 +373,7 @@ journalctl -u wave-vision-llm -b --no-pager | tail -30
 
 `ExecStart` 走 `deploy/start_vision.sh`，它按顺序做**四道门禁**，全过才启动主程序：
 
-1. 等两个摄像头设备节点（最长 60s）
+1. 等四路相机别名 `/dev/wave/cam_pallet` + `cam_detect_1/2/3`（最长 60s）
 2. 等板内代理端口 7890（最长 30s）
 3. **网络就绪**：`curl` 走代理带 key 真打 `$BASE_URL/models`，拿到 200 才算通（最长 300s，单调时钟计时）
 4. 等 X 会话 `:0` 可用（最长 60s）
@@ -352,12 +405,18 @@ curl -s -o /dev/null -w '%{http_code}\n' -m 10 -x http://127.0.0.1:7890 https://
 
 ### 更新板端代码
 
+**现状：板端代码是 scp 上去的**（板上没有 git 仓库，也**不要**在板上 `git init`）。在 PC 上改完、提交后，
+把改动的文件 scp 过去再重启服务：
+
 ```bash
-cd ~/WaveRider_GongChuang_Vision
-git pull --ff-only && sudo systemctl restart wave-vision-llm
+scp -r shared llm yolo models tools deploy main_push_llm.py test_llm.py requirements.txt \
+    orangepi@192.168.43.5:~/WaveRider_GongChuang_Vision/
+ssh orangepi@192.168.43.5 'sudo systemctl restart wave-vision-llm'
 ```
 
-**板上不要改代码**（会在 pull 时冲突），改动一律在 PC 上提交后推送；`.env` 在 `.gitignore` 里，pull 永远不会覆盖它。
+**板上不要改代码**，改动一律在 PC 上做。`.env` 与 `capture/`、`llm_responses/` 都不在同步清单里，
+板端那份是独立的，别覆盖。等板上换成 git 之后，这一节可以简化成
+`git pull --ff-only && sudo systemctl restart wave-vision-llm`。
 
 ### 关闭 / 恢复自启
 
@@ -396,8 +455,11 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 已知坑：
 
-- **第 6 项报 `dns resolve failed: couldn't find ip`** → 手机热点的 DNS 解析不了节点那个 `.qpon` 域名。修法：把板子 DNS 换成公共 DNS
-  （`nmcli connection modify "<热点名>" ipv4.ignore-auto-dns yes ipv4.dns "223.5.5.5,119.29.29.29"` 然后 `nmcli connection up "<热点名>"`），再 `sudo systemctl restart mihomo`。
+- **第 6 项报 `dns resolve failed: couldn't find ip`** → 节点那个 `.qpon` 域名解析不了。
+  **实测不要给链路强指公共 DNS**：手机热点的 DNS、`223.5.5.5`、`119.29.29.29` 都解不出该域名，
+  **只有网卡那侧运营商下发的 DNS（`192.168.0.1`）能解**。所以保持链路自动获取 DNS
+  （`ipv4.ignore-auto-dns no`、`ipv4.dns ""`，已回滚掉早期强指公共 DNS 的做法），
+  修法是确认主路（USB 网卡）在，再 `sudo systemctl restart mihomo`。
 - **冷启动后 1~5 分钟才通** → mihomo 起得比外网早，第一次拉订阅失败。可用 systemd drop-in 让 mihomo 等外网后再启动。
 - `Request timed out.` ≠ `Connection error.`：前者是隧道卡住（DNS/节点），后者是隧道建不起来（代理没起/节点死）。
 
@@ -415,6 +477,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | `摄像头打开失败` 且有两个实例 | 手动跑的和服务抢设备 | `sudo systemctl stop wave-vision-llm` 后确认 `pgrep` 为空 |
 | `缺少形状示例照片` / `空场景参考照片` | `llm/example/` 文件不齐 | 补齐后重启（缺哪个日志会写全路径） |
 | `Recognition display stopped:` | 显示线程当场死了 | 查 X 会话与 `xrandr` |
+| 启动日志「相机别名不存在」 | udev 规则没生效 / 换了 USB 口 | `ls -l /dev/wave/`；按新 `ID_PATH` 改 `70-wave-cameras.rules` 后 reload + trigger（见「相机与设备别名」） |
 | 多次识别同件结果不同 | 采图信息不足或 prompt 边界 | 看 `pending/*/review.json` 的原因原文 |
 | 日志时间戳错乱 | 板子无 RTC，开机头半分钟时钟是上次关机时间 | `timedatectl set-ntp true` |
 
@@ -435,7 +498,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | `timing_breakdown.py` | 按时间戳拆整轮各段耗时 |
 | `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
 | `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
-| `preview_camera.py` | 摄像头预览（`--http 8080` 可在 PC 浏览器看 MJPEG） |
+| `preview_camera.py` | 摄像头预览（`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可在 PC 浏览器看 MJPEG） |
 | `capture.py` | 抽帧 / 录像 |
 | `crop_preview.py` | 按四边比例裁剪预览（`--use-const` 直接读 const.py） |
 | `ab_reasoning.py` / `tier_ab.sh` / `probe_images.py` | 耗时与档位 A/B 对比（调优用） |

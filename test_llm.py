@@ -1,11 +1,11 @@
 """离线测试 LLM 识别：不依赖摄像头 / 串口 / RKNN，直接喂本地图片。
 
 复用线上同一套代码（llm.qw / llm.prompt / llm.shape_recognition /
-llm.shape_memory / llm.empty_examples / shared.common），结果与 main_llm 一致。
+llm.shape_memory / llm.empty_examples / shared.common），结果与 main_push_llm 一致。
 
 前置条件（PC 上）：
     pip install openai opencv-python numpy
-    项目根目录已有 .env（key + model + base_url），LLM_CACHE_MODE 默认 portable。
+    项目根目录已有 .env（key + model + base_url），LLM_CACHE_MODE 默认 openai_explicit。
 
 用法（在项目根目录执行）：
     python test_llm.py classify <图1> <图2> <图3>          # 识别区多视角分类（个数 = STAGE_TWO_DETECTION_COUNT）
@@ -50,7 +50,7 @@ logger = logging.getLogger("wave.vision.test")
 
 
 def _parse_pallet(result):
-    """查栏结果校验：长度 COLUMN_COUNT 的布尔数组（与 main_llm 同逻辑）。"""
+    """查栏结果校验：长度 COLUMN_COUNT 的布尔数组（与 main_push_llm 同逻辑）。"""
     if not isinstance(result, list) or len(result) != COLUMN_COUNT:
         raise LLMError(f"托盘结果应为长度 {COLUMN_COUNT} 的数组: {result!r}")
     out = []
@@ -87,7 +87,7 @@ def _read(paths):
 def cmd_classify(args):
     if len(args.images) != STAGE_TWO_DETECTION_COUNT:
         sys.exit(f"classify 需要恰好 {STAGE_TWO_DETECTION_COUNT} 张视角图片"
-                 "（a 触发第 1 张 + 每次转向各 1 张）")
+                 "（a 一到，三路固定机位各取一帧）")
     frames = _read(args.images)
 
     empty = load_empty_examples()

@@ -1,9 +1,9 @@
 '''
-常量定义（YOLO 版 + LLM 版共用）
+常量定义（唯一入口 main_push_llm.py）
 
-- 硬件（摄像头/串口）、托盘几何、串口协议、类别表为两个后端共用。
-- 模型路径、形状预判等 RKNN 相关项仅 YOLO 版使用；LLM 版会忽略。
-- LLM 调试相关项（SAVE_LLM_RESPONSES / LLM_RESPONSE_DIR）仅 LLM 版使用。
+- 硬件（摄像头/串口）、托盘几何、串口协议、类别表为主流程使用。
+- 模型路径、形状预判等 RKNN 相关项只在 LLM 版的可选 YOLO fallback 里用。
+- LLM 调试相关项：SAVE_LLM_RESPONSES / LLM_RESPONSE_DIR。
 '''
 import os
 
@@ -18,12 +18,19 @@ DETECT_AREA_SHAPE_MODEL_PATH = "models/shape_detect_area.rknn"
 DETECT_AREA_LABEL_MODEL_PATH = "models/label_detect_area.rknn"
 
 # ================= 摄像头信息（两个后端共用） =================
-CAMERA_PALLET_ID = "/dev/v4l/by-id/usb-Generic_USB_Camera_200901010001-video-index0"   #大托盘上方广角摄像头
+CAMERA_PALLET_ID = os.environ.get("CAMERA_PALLET_ID", "/dev/wave/cam_pallet")   #大托盘上方广角摄像头
 # 识别区：三个固定机位（机械改造后不再旋转）
 #   ① ② 水平相对、各自向下倾斜约 45° 俯视（互补看到两侧竖直面）
 #   ③ 正下方仰视，看底面（薄壁开口 / 底部贴纸）
-# 名字由 /etc/udev/rules.d/70-wave-cameras.rules 固定：同款相机 by-id 会撞名（假序列号），
-# 所以一律用 /dev/wave/cam_* 别名，换 USB 口只改 udev 规则、不动代码。
+#
+# 四路相机一律走 /dev/wave/cam_* 别名，别名由 /etc/udev/rules.d/70-wave-cameras.rules
+# 按 **USB 物理口**（ENV{ID_PATH}）绑定。不用 by-id：两台 0bda:9143 假序列号都是
+# 200901010001，by-id 名字直接撞车。换 USB 口只改 udev 规则，代码一行不动。
+# 当前绑定（改线后必须同步这里的注释，规则文件才是唯一真相）：
+#   platform-fc800000.usb-usb-0:1.2:1.0 → cam_pallet   （托盘广角）
+#   platform-fc800000.usb-usb-0:1.1:1.0 → cam_detect_1 （斜上①）
+#   platform-fc880000.usb-usb-0:1.3:1.0 → cam_detect_2 （斜上②，icspring）
+#   platform-fc880000.usb-usb-0:1.4:1.0 → cam_detect_3 （正下③）
 DETECT_CAMERA_IDS = (
     os.environ.get("CAMERA_DETECT_1", "/dev/wave/cam_detect_1"),
     os.environ.get("CAMERA_DETECT_2", "/dev/wave/cam_detect_2"),
@@ -37,7 +44,7 @@ PALLET_FPS = 30
 DETECT_WIDTH = 1280
 DETECT_HEIGHT = 720
 DETECT_FPS = 30
-# 为main_laser服务的摄像头信息
+# 为 main_laser 服务的摄像头信息（该入口已归档；LASER_* 超时常量仍被 llm/shape_recognition.py 引用，勿删）
 CAMERA_LEFT_ID = "/dev/v4l/by-id/usb-RYS_USB_Camera_200901010001-video-index0"
 CAMERA_RIGHT_ID = os.environ.get("CAMERA_RIGHT_ID", "/dev/v4l/by-path/CONFIGURE_RIGHT_CAMERA-video-index0")
 
@@ -82,8 +89,8 @@ STABLE_TIMES = 5
 
 CONTAIN_THRESHOLD = 0.8
 MAX_TEMP_CATEGORIES = 6
-MAX_ITEMS_PER_CATEGORY = 16  # 每盒最多 16 件（同一类别可放的上限；改这里同时影响 main_push_llm / main_push_yolo / main_laser_llm / agent）
-STAGE_TWO_DETECTION_COUNT = 3  # 阶段2 识别区拍摄的视角数：3 个角度，相邻 120°（与电控约定一致）
+MAX_ITEMS_PER_CATEGORY = 16  # 每盒最多 16 件（同一类别可放的上限；当前只有 main_push_llm.py 在用）
+STAGE_TWO_DETECTION_COUNT = 3  # 阶段2 识别区机位数：机械改造后为 3 个固定机位（①②斜上相对 + ③正下方仰视），不再旋转
 
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
@@ -119,7 +126,7 @@ PUSH_MARGIN = 0.0
 #   注意：内缩过多会把最左/最右栏的边缘切掉，影响查栏；先小后大，用 test_llm.py 验证。
 PALLET_LLM_INSET = {"left": 0.01, "top": 0.01, "right": 0.03, "bottom": 0.03}
 
-# 阶段2（识别区多视角，现为 3 个角度 × 120°）：在摄像头已裁成的正方形（1280x720 -> 720x720）基础上再内缩。
+# 阶段2（识别区三路固定机位 ① ② ③）：在摄像头已裁成的正方形（1280x720 -> 720x720）基础上再内缩。
 #   右、上各 1/6 后约 600x600；左、下暂不裁。
 DETECT_LLM_INSET = {"left": 0.13 , "top": 0.13, "right": 0.13, "bottom": 0.13}
 

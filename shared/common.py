@@ -1,7 +1,7 @@
 """公共工具：摄像头、串口、帧取、临时分类、图像裁剪与托盘几何。
 
-YOLO 版（main_push.py / main_grab.py）与 LLM 版（main_llm.py）共用的基础层。
-所有日志统一走 logging（logger 名 wave.vision），两个后端保持一致的日志风格。
+唯一入口 main_push_llm.py 的基础层（YOLO 版 main_push / main_grab 已归档删除）。
+所有日志统一走 logging（logger 名 wave.vision）。
 """
 
 import logging
@@ -156,18 +156,6 @@ def wait_event(event, stop_event, timeout=1.0, what=""):
     event.clear()
 
 
-def wait_stage_two_signal(stage_two_requested, stop_event):
-    """等待电控发 b（转向完成），超时重试，故障则退出。"""
-    while True:
-        if stop_event.is_set():
-            raise CameraStopped()
-        try:
-            stage_two_requested.get(timeout=1.0)
-            return
-        except queue.Empty:
-            logger.info("等待串口信号 b 超时，继续等待…")
-
-
 # ---- 摄像头 ----
 def initial_cap(camera_id, camera_name, width, height, fps):
     """初始化并配置摄像头，返回已打开的 VideoCapture；失败返回 None。"""
@@ -241,12 +229,14 @@ def read_camera(capture, camera_name, frame_queue, fps_queue, stop_event, crop_s
         capture.release()
 
 
-# ---- 串口（a/b/c/v 协议，main_push 与 main_llm 共用） ----
-def communicate_serial(send_queue, stop_event, start_requested, stage_two_requested,
+# ---- 串口（电控 → 视觉：a / c / v；视觉 → 电控：0~6 / f） ----
+def communicate_serial(send_queue, stop_event, start_requested,
                        column_check_requested, display_requested):
     """独立处理串口收发，避免串口 I/O 阻塞视觉主流程。
 
-    监听电控指令 a/b/c/v，分别置位对应事件/队列。
+    监听电控指令 a / c / v，分别置位对应事件。
+    机械改造后识别区改三路固定机位、不再旋转，`b`（转向完成）已废弃：
+    仍然接收并记日志（以免被当成未知指令），但不再置位任何事件。
     """
     try:
         ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=0.01)
@@ -274,7 +264,7 @@ def communicate_serial(send_queue, stop_event, start_requested, stage_two_reques
                 if reply == "a":
                     start_requested.set()
                 elif reply == "b":
-                    stage_two_requested.put_nowait(True)
+                    logger.debug("收到已废弃的 b（转向完成），忽略")  # 识别区不再旋转，无人等待
                 elif reply == "c":
                     column_check_requested.set()
                 elif reply == "v":
@@ -303,17 +293,6 @@ def parse_group_match(value, groups):
     elif gid is not None:
         raise ValueError("非 existing 时 group 必须为 null")
     return value["status"], gid
-
-
-def reserve_group(groups, frames, max_groups=MAX_TEMP_CATEGORIES):
-    """为明确新组预留箱号及参考图；满组返回 0，不修改已有编号。"""
-    if len(groups) >= max_groups:
-        return 0
-    gid = next((i for i in range(1, max_groups + 1) if i not in groups), 0)
-    if gid:
-        groups[gid] = {"color": None, "shape": None, "name": f"第{gid}类（待确认）",
-                       "frames": [frame.copy() for frame in frames]}
-    return gid
 
 
 def categorize(color_name, shape_name, label=None):
@@ -474,27 +453,3 @@ def column_occupancy(points, frame_shape, column_count=COLUMN_COUNT):
     if not LASER_SENSOR_ON_LEFT:
         occupancy.reverse()
     return occupancy
-
-
-# ---- 录像（YOLO 版用，写入画框后的托盘图 + 识别区原图） ----
-def record_pallet_streams(large_pallet_frame, detect_area_frame, result,
-                          large_pallet_video_writer, detect_area_video_writer,
-                          video_dir, run_name, large_pallet_fps, detect_area_fps):
-    """按需初始化并写入两路录像，返回更新后的 writer。"""
-    if large_pallet_video_writer is None:
-        height, width = result.shape[:2]
-        large_pallet_video_writer = cv2.VideoWriter(
-            os.path.join(video_dir, f"{run_name}_large_pallet.mp4"),
-            cv2.VideoWriter_fourcc(*"mp4v"), large_pallet_fps,
-            (width, height),
-        )
-    if detect_area_video_writer is None:
-        height, width = detect_area_frame.shape[:2]
-        detect_area_video_writer = cv2.VideoWriter(
-            os.path.join(video_dir, f"{run_name}_detect_area.mp4"),
-            cv2.VideoWriter_fourcc(*"mp4v"), detect_area_fps,
-            (width, height),
-        )
-    large_pallet_video_writer.write(result)
-    detect_area_video_writer.write(detect_area_frame)
-    return large_pallet_video_writer, detect_area_video_writer

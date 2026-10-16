@@ -164,8 +164,8 @@ _client_lock = threading.Lock()
 def _get_client():
     """懒加载 OpenAI 客户端单例，复用底层连接池。
 
-    注意：httpx 默认 keepalive_expiry=5 秒，而阶段2 相邻两次请求间隔 10~20 秒
-    （三次转向 + 机械动作 + 等 v），会让每次请求都重新做 TCP+TLS 握手。
+    注意：httpx 默认 keepalive_expiry=5 秒，而阶段2 相邻两轮请求间隔 10~20 秒
+    （识别 + 机械动作 + 等 v），会让每次请求都重新做 TCP+TLS 握手。
     实测首次请求比复用连接慢 1.5~2 秒，因此这里把空闲保活时间拉长。
     """
     global _client

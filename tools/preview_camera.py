@@ -16,8 +16,10 @@ shared/const.py），叠加框也直接读 const 里的几何参数，所以"你
     # 想在 MobaXterm 的 X11 窗口里看（不改 DISPLAY）
     python tools/preview_camera.py --display pc
 
-    # 识别区摄像头
-    python tools/preview_camera.py --camera detect --http 8080
+    # 识别区某一路机位（①② 斜上相对、③ 正下方仰视）
+    python tools/preview_camera.py --camera detect_up1 --http 8080
+    python tools/preview_camera.py --camera detect_up2
+    python tools/preview_camera.py --camera detect_down
 
     # 同时弹一个窗，显示"实际发给大模型的图"
     DISPLAY=:0 python tools/preview_camera.py --show-llm
@@ -44,7 +46,7 @@ from shared.common import (  # noqa: E402
     initial_cap, crop_to_square, crop_pallet_llm, crop_detect_llm,
 )
 from shared.const import (  # noqa: E402
-    CAMERA_PALLET_ID, CAMERA_DETECT_AREA_ID,
+    CAMERA_PALLET_ID, DETECT_CAMERA_IDS,
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
     TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX, COLUMN_COUNT,
@@ -53,7 +55,11 @@ from shared.const import (  # noqa: E402
 
 CAMERAS = {
     "pallet": (CAMERA_PALLET_ID, "托盘上方广角摄像头", PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS),
-    "detect": (CAMERA_DETECT_AREA_ID, "识别区摄像头", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
+    "detect_up1": (DETECT_CAMERA_IDS[0], "识别区① 斜上方", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
+    "detect_up2": (DETECT_CAMERA_IDS[1], "识别区② 斜上方(相对)", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
+    "detect_down": (DETECT_CAMERA_IDS[2], "识别区③ 正下方仰视", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
+    # 旧命令兼容：--camera detect 等价于 detect_up1
+    "detect": (DETECT_CAMERA_IDS[0], "识别区① 斜上方", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
 }
 
 # 供 HTTP 线程读取的共享状态

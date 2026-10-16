@@ -16,7 +16,7 @@ WorkingDirectory=/home/orangepi/WaveRider_GongChuang_Vision
 EnvironmentFile=/home/orangepi/WaveRider_GongChuang_Vision/.env
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/orangepi/.Xauthority
-# 启动包装：先等两个摄像头节点与代理端口就绪，再拉起主程序
+# 启动包装：先等四路相机别名（/dev/wave/cam_*）与代理端口就绪，再拉起主程序
 ExecStart=/bin/bash /home/orangepi/WaveRider_GongChuang_Vision/deploy/start_vision.sh
 # 主程序捕获摄像头/串口故障后可能「正常退出」，所以正常退出也要重启
 Restart=always

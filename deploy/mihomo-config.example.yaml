@@ -1,6 +1,6 @@
 # Mihomo 代理配置示例（复制到 ~/mihomo/config.yaml 后使用）
 #
-# 用途：给板子提供稳定的 HTTP 代理出口，供 main_llm.py 访问 OpenRouter。
+# 用途：给板子提供稳定的 HTTP 代理出口，供 main_push_llm.py 访问 LLM 端点。
 # 部署步骤见 README「运行环境」一节；systemd 单元见 deploy/mihomo.service。
 #
 # ⚠️ 把 url 换成自己的订阅链接后再用，并且**不要把真实链接提交进仓库**

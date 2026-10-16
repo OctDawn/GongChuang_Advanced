@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 开机自启包装（由 deploy/wave-vision-llm.service 调用，也可手动执行来验证）。
 #
-# 为什么需要它：冷启动时 USB 摄像头往往还没枚举完，主程序按 /dev/v4l/by-id 名字
+# 为什么需要它：冷启动时 USB 摄像头往往还没枚举完，主程序按 /dev/wave 别名
 # 打开会直接失败退出（日志形态：VIDEOIO(V4L2) ... can't be used to capture by name）。
-# 本脚本先等两个摄像头节点与板内代理端口就绪，再把主程序交给 systemd 监督。
+# 本脚本先等四路相机别名与板内代理端口就绪，再把主程序交给 systemd 监督。
 #
 # 退出码：主程序的退出码原样透传；systemd 端 Restart=always 会继续重启。
 set -u
@@ -17,8 +17,15 @@ ENTRY="${ENTRY:-main_push_llm.py}"
 WAIT_DEV="${WAIT_DEV:-60}"      # 等摄像头最长秒数
 WAIT_PROXY="${WAIT_PROXY:-30}"  # 等板内代理端口最长秒数
 
-PALLET_CAM="/dev/v4l/by-id/usb-Generic_USB_Camera_200901010001-video-index0"
-DETECT_CAM="/dev/v4l/by-id/usb-RYS_USB_Camera_200901010001-video-index0"
+# 相机一律走 /etc/udev/rules.d/70-wave-cameras.rules 建的物理口别名。
+# 不用 by-id：两台 0bda:9143 假序列号相同，by-id 名字会撞车。
+# 顺序就是 main_push_llm 取帧的顺序（① ② 斜上相对、③ 正下方仰视）。
+CAM_ALIASES=(
+    "/dev/wave/cam_pallet"     # 托盘上方广角
+    "/dev/wave/cam_detect_1"   # 识别区① 斜上
+    "/dev/wave/cam_detect_2"   # 识别区② 斜上（相对）
+    "/dev/wave/cam_detect_3"   # 识别区③ 正下方仰视
+)
 
 log() { printf '[start_vision %s] %s\n' "$(date +%H:%M:%S)" "$1"; }
 
@@ -38,14 +45,22 @@ wait_for() {  # wait_for <描述> <秒数> <命令...>
     return 1
 }
 
+all_cams_ready() {  # 四路别名都存在
+    local camera
+    for camera in "${CAM_ALIASES[@]}"; do
+        [ -e "$camera" ] || return 1
+    done
+    return 0
+}
+
 log "项目目录: $ROOT"
-wait_for "两个摄像头设备节点" "$WAIT_DEV" \
-    bash -c "[ -e '$PALLET_CAM' ] && [ -e '$DETECT_CAM' ]"
+wait_for "四路相机别名 (pallet + detect_1/2/3)" "$WAIT_DEV" all_cams_ready
 wait_for "板内代理 127.0.0.1:7890" "$WAIT_PROXY" \
     bash -c "ss -lnt 2>/dev/null | grep -q 127.0.0.1:7890"
 
-[ -e "$PALLET_CAM" ] || log "!! 托盘摄像头节点不存在: $PALLET_CAM"
-[ -e "$DETECT_CAM" ] || log "!! 识别区摄像头节点不存在: $DETECT_CAM"
+for camera in "${CAM_ALIASES[@]}"; do
+    [ -e "$camera" ] || log "!! 相机别名不存在: $camera（查 70-wave-cameras.rules 与接线）"
+done
 
 # 代理是最大的静默坑：systemd 不读 .bashrc，缺了代理会表现为「LLM 一直超时 → 回落/回 0」
 if [ -n "${HTTPS_PROXY:-}" ]; then

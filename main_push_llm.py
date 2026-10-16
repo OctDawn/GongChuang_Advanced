@@ -1,19 +1,21 @@
 """主程序（LLM 版）：多线程串口循环 + Qwen-VL 识别。
 
-串口协议、阶段编排、显示沿用 YOLO 版 main_push。
-查栏和多视角分类优先 Qwen-VL，请求超过 35 秒或失败时用同轮原图运行 YOLO。
+串口协议、阶段编排、显示沿用早期 YOLO 版的框架。
+查栏和三路固定机位分类优先 Qwen-VL；单轮超过 LLM_FALLBACK_TIMEOUT（线上 .env=15s）
+或失败时回 0（YOLO_FALLBACK=0），本件不分拣。
 
 贴纸已开放化：图案类用 LLM 开放描述；码/文字类用 label 模型定位贴纸框
 后交给 yolo/decoder 确定性解码（定位关闭或未解出时降级为整帧解码）。
 
 协议（电控 -> 视觉）：
-    a  开始下一轮（进入阶段 2）
-    b  转向完成
+    a  开始下一轮（直接进入阶段 2）
+    b  （已废弃）机械改造前的「转向完成」：识别区改三路固定机位后不再需要，
+       收到只记 debug 日志、不置位任何事件
     c  检查托盘各栏
     v  电控操作完成，请求视觉显示
 
 视觉 -> 电控：
-    r        要求转向（阶段 2 中间角度）
+    （已删除）r  要求转向：识别区不再旋转，三路机位一次拍齐
     0 / 1~6  分类结果（0=无物体/失败/类别已满）
     1/0 ×5   查栏结果，每栏后带换行（如 "1\\n0\\n1\\n1\\n0\\n"）
     f        显示完成回执
@@ -48,7 +50,7 @@ from llm.shape_recognition import ShapeRecognizer
 from llm.empty_examples import load_empty_examples, load_shape_examples
 from shared.show import RecognitionRow, run_recognition_display
 from shared.common import (
-    CameraStopped, get_frame, get_frame_retry, wait_event, wait_stage_two_signal,
+    CameraStopped, get_frame, get_frame_retry, wait_event,
     initial_cap, crop_pallet_llm, read_camera, communicate_serial, categorize,
     category_is_full, object_display_name, sticker_decode_enabled,
 )
@@ -56,7 +58,11 @@ from yolo.decoder import decode_sticker, crop_box
 from yolo.fallback import YoloFallback
 
 logger = logging.getLogger("wave.vision")
-LLM_FALLBACK_TIMEOUT = float(os.environ.get("LLM_FALLBACK_TIMEOUT", "35"))  # 单轮 LLM 总时限（秒），超时回落 YOLO；建议 .env 设 18
+LLM_FALLBACK_TIMEOUT = float(os.environ.get("LLM_FALLBACK_TIMEOUT", "35"))  # 单轮 LLM 总时限（秒）；线上 .env 固定 15（硬规定），超时回 0
+
+# 显示屏「图片」列取哪个机位的画面：0=①斜上、1=②斜上、2=③正下方仰视。
+# ③ 是正下方仰视，可能完全拍不到本体（只看到底面），不能当缩略图，所以默认取 ①。
+DISPLAY_VIEW_INDEX = int(os.environ.get("DISPLAY_VIEW_INDEX", "0"))
 
 
 def save_images_worker(image_queue, stop_event, image_dir):
@@ -73,6 +79,7 @@ def save_images_worker(image_queue, stop_event, image_dir):
             continue
         for idx, frame in enumerate(frames, start=1):
             try:
+                # 文件名里的 idx 就是机位号：01=①斜上 02=②斜上 03=③正下方仰视
                 cv2.imwrite(
                     os.path.join(original_dir, f"stage2_r{round_no:03d}_{idx:02d}.jpg"),
                     frame,
@@ -84,12 +91,12 @@ def save_images_worker(image_queue, stop_event, image_dir):
 class PushController:
     """托盘推送主控制流程（LLM 版）。
 
-    与 YOLO 版 PushController 的职责一致：阶段 1 查栏、阶段 2 多角度识别、
+    与早期 YOLO 版 PushController 的职责一致：阶段 1 查栏、阶段 2 三路固定机位识别、
     阶段 3 显示回执，共享状态统一收在实例里。
     """
 
     def __init__(self, label_runner, pallet_frame_queue, detect_area_frame_queues, send_queue,
-                 stage_two_requested, display_row_queue,
+                 display_row_queue,
                  start_requested, column_check_requested, display_requested,
                  stop_event, video_dir, image_dir, run_name, pallet_fps, detect_area_fps,
                  empty_examples, shape_examples, yolo_fallback, display_wake=None):
@@ -99,7 +106,7 @@ class PushController:
         self.pallet_frame_queue = pallet_frame_queue
         self.detect_area_frame_queues = tuple(detect_area_frame_queues)
         self.send_queue = send_queue
-        self.stage_two_requested = stage_two_requested
+        # 识别区改三路固定机位后不再等 b 握手，原 stage_two_requested 队列已整体移除
         self.display_row_queue = display_row_queue
         self.start_requested = start_requested
         self.column_check_requested = column_check_requested
@@ -247,14 +254,6 @@ class PushController:
                 raise LLMError(f"托盘结果值非法: {result!r}")
         return out
 
-    def drain_stage_two_requests(self):
-        """清空遗留的 b 请求，避免上一轮残留影响本轮。"""
-        try:
-            while True:
-                self.stage_two_requested.get_nowait()
-        except queue.Empty:
-            pass
-
     def _fresh_frame(self, frame_queue, name):
         """取 a 之后拍到的最新一帧：先丢掉积压（a 之前或上一件的旧画面），再等新帧。
 
@@ -344,7 +343,8 @@ class PushController:
             return
 
         object_name = object_display_name(color, shape, label)
-        display_image = frames[-1] if frames else None
+        display_image = (frames[DISPLAY_VIEW_INDEX]
+                         if len(frames) > DISPLAY_VIEW_INDEX else None)
         self.pending_display_row = (category, object_name, display_image.copy() if display_image is not None else None)
         self.send_queue.put(f"{category}\n")
         logger.info("阶段 2 结果: color=%s shape=%s label=%s category=%d", color, shape, label, category)
@@ -354,7 +354,8 @@ class PushController:
         self.discarded += 1
         self.pending_display_row = None
         name = object_display_name(color, shape, label)
-        image = frames[-1].copy() if frames else None
+        image = (frames[DISPLAY_VIEW_INDEX].copy()
+                 if len(frames) > DISPLAY_VIEW_INDEX else None)
         self.display_row_queue.put(RecognitionRow(
             index=MAX_TEMP_CATEGORIES + 1, name=f"{name}（{reason}）",
             image=image, total=self.discarded))
@@ -455,7 +456,6 @@ class PushController:
                     self.send_queue.put("".join("1\n" for _ in range(COLUMN_COUNT)))
                 continue
 
-            self.drain_stage_two_requests()
             self.run_stage_two()
             self.finish_display()
 
@@ -470,7 +470,6 @@ def _run(empty_examples, shape_examples, fallback):
     detect_frame_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
     detect_fps_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
     send_queue = queue.Queue()
-    stage_two_requested = queue.Queue()
     display_row_queue = queue.Queue()
     stop_event = threading.Event()
     start_requested = threading.Event()
@@ -508,7 +507,7 @@ def _run(empty_examples, shape_examples, fallback):
     ]
     serial_worker = threading.Thread(
         target=communicate_serial,
-        args=(send_queue, stop_event, start_requested, stage_two_requested,
+        args=(send_queue, stop_event, start_requested,
               column_check_requested, display_requested),
         daemon=True,
     )
@@ -560,7 +559,7 @@ def _run(empty_examples, shape_examples, fallback):
         controller = PushController(
             label_runner,
             large_pallet_frame_queue, detect_frame_queues, send_queue,
-            stage_two_requested, display_row_queue,
+            display_row_queue,
             start_requested, column_check_requested, display_requested,
             stop_event,
             video_dir, image_dir, run_name, pallet_fps, detect_area_fps,

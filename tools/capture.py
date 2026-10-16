@@ -14,18 +14,21 @@ import time
 import cv2
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared.const import (CAMERA_PALLET_ID, CAMERA_DETECT_AREA_ID,
+from shared.const import (CAMERA_PALLET_ID, DETECT_CAMERA_IDS,
                    PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
                    DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
 
 
-CAMERA_TYPE = "pallet"  # 大托盘用 pallet，识别区用 detect_area
+# 可取值：pallet | detect_up1 | detect_up2 | detect_down（detect_area 为 detect_up1 的旧别名）
+CAMERA_TYPE = "pallet"
+_DETECT_SLOTS = {"detect_up1": 0, "detect_area": 0, "detect_up2": 1, "detect_down": 2}
+
 if CAMERA_TYPE == "pallet":
     CAMERA_ID = CAMERA_PALLET_ID
     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS = PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS
     CROP_SQUARE = False
-elif CAMERA_TYPE == "detect_area":
-    CAMERA_ID = CAMERA_DETECT_AREA_ID
+elif CAMERA_TYPE in _DETECT_SLOTS:
+    CAMERA_ID = DETECT_CAMERA_IDS[_DETECT_SLOTS[CAMERA_TYPE]]
     CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS = DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS
     CROP_SQUARE = True
 else:
