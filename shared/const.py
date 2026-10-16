@@ -26,7 +26,8 @@ CAMERA_PALLET_ID = os.environ.get("CAMERA_PALLET_ID", "/dev/wave/cam_pallet")   
 # 四路相机一律走 /dev/wave/cam_* 别名，别名由 /etc/udev/rules.d/70-wave-cameras.rules
 # 按 **USB 物理口**（ENV{ID_PATH}）绑定。不用 by-id：两台 0bda:9143 假序列号都是
 # 200901010001，by-id 名字直接撞车。换 USB 口只改 udev 规则，代码一行不动。
-# 当前绑定（改线后必须同步这里的注释，规则文件才是唯一真相）：
+# 规则源文件在仓库里：deploy/70-wave-cameras.rules（README「相机与设备别名」同）。
+# 当前绑定（改线后这三处必须一起更新）：
 #   platform-fc800000.usb-usb-0:1.2:1.0 → cam_pallet   （托盘广角）
 #   platform-fc800000.usb-usb-0:1.1:1.0 → cam_detect_1 （斜上①）
 #   platform-fc880000.usb-usb-0:1.3:1.0 → cam_detect_2 （斜上②，icspring）

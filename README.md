@@ -1,13 +1,31 @@
 # Orange Pi 视觉分拣程序（LLM 版）
 
-在 Orange Pi 5 Pro（RK3588S，Ubuntu 22.04）上运行视觉识别，通过串口与电控通信，由显示屏呈现分拣结果。
+在 Orange Pi 5 Pro（RK3588S，Ubuntu 22.04）上跑视觉识别，通过串口与电控通信，由显示屏呈现分拣结果。
+适用于「浙江省大学生工程实践与创新能力大赛·智能分拣赛项」。
 
 - **当前唯一入口**：`main_push_llm.py`（视觉大模型识别，本地 NPU 仅作可选回落）
+- **四路相机**：托盘广角 1 路 + 识别区**三路固定机位** 3 路（识别区已取消旋转）
 - **启动方式**：`bash deploy/start_vision.sh`（带四道就绪门禁），或手动 `python main_push_llm.py`
 - **开机自启**：`deploy/wave-vision-llm.service`（systemd）
 
-> 历史方案（**已归档，不再维护**）：`main_push_yolo.py`（纯 YOLO）、`main_laser_llm.py` + `shared/laser.py`（视觉替换激光传感器）、`main_grab.py`（早期抓取）、`agent/`（自主决策）。
-> 其中 `yolo/` 目录**仍然保留**：LLM 版的 YOLO fallback、贴纸解码、模型类别数防呆都在用。
+> 历史方案（**已归档，不再维护**）：`main_push_yolo.py`（纯 YOLO）、`main_laser_llm.py` + `shared/laser.py`（视觉替换激光传感器）、
+> `main_grab.py`（早期抓取）、`agent/`（自主决策）。其中 `yolo/` 目录**仍然保留**：LLM 版的 YOLO fallback、
+> 贴纸解码、模型类别数防呆都在用。
+>
+> 仓库名是 `GongChuang_Advanced`，但板端目录仍叫 `~/WaveRider_GongChuang_Vision`（历史遗留，本文沿用板端路径）。
+
+---
+
+## 目录
+
+- [更新记录](#更新记录)
+- [项目结构](#项目结构)
+- [当前流程](#当前流程) —— 串口协议 / 阶段编排 / 线程与故障处理
+- [相机与设备别名（udev）](#相机与设备别名udev) —— 别名表 / 带宽 / **调试机位** / 换线流程
+- [运行前配置](#运行前配置) —— 环境 / `.env` / 图片链路 / 缓存 / 形状记忆
+- [部署与运行](#部署与运行) —— 服务与门禁 / 图形会话 / 代理 / 手动跑 / 自启开关 / 更新板端
+- [排查手册](#排查手册) —— 自启动 / 相机 / 网络 / 显示 / 故障对照
+- [工具脚本（tools/）](#工具脚本tools)
 
 ---
 
@@ -19,6 +37,8 @@
 - 识别区改三路固定机位，取消 r/b 握手
 - 相机改 udev 物理口别名 cam_*
 - 四路相机拆两条总线解决带宽
+- 缩略图取机位①，不再取正下方那路
+- udev 规则纳入 deploy/，补调试章节
 
 **10/9 hrx**
 - 网络/显示/自启三处加固，初赛完赛
@@ -153,6 +173,7 @@ GongChuang_Advanced/
 ├── main_push_llm.py             # 唯一入口：串口协议 + 阶段编排
 ├── test_llm.py                  # 离线测试（PC 上喂图片，不碰硬件）
 ├── requirements.txt
+├── .gitattributes               # 全仓 LF（.sh 必须 LF，否则板上报 'bash\r'）
 ├── .env.example / .env          # .env 已 gitignore，含 key 与代理三行
 ├── llm/                         # 大模型层
 │   ├── qw.py                    # OpenAI 客户端：缓存模式、重试、图片编码
@@ -173,7 +194,13 @@ GongChuang_Advanced/
 │   └── screen.py                # xset 封装（关屏保 / DPMS）
 ├── models/                      # 4 个 RKNN 模型 + 类别 yaml
 ├── tools/                       # 现场排查与调优脚本（见文末）
-└── deploy/                      # systemd 服务与启动包装
+└── deploy/                      # systemd 服务、启动包装、udev 规则
+    ├── start_vision.sh          # 四道门禁 + 启动主程序
+    ├── wave-vision-llm.service  # 开机自启单元
+    ├── wave-hdmi-watch.service  # 显示看门狗（可选）
+    ├── 70-wave-cameras.rules    # 相机固定别名（拷到 /etc/udev/rules.d/）
+    ├── mihomo.service           # 板内代理
+    └── mihomo-config.example.yaml
 ```
 
 按文件名运行，例如 `python main_push_llm.py`。所有相对路径（`capture/`、`models/`）都以项目根目录为基准。
@@ -195,24 +222,38 @@ GongChuang_Advanced/
 | 视觉 → 电控 | `0` / `1~6` | 分类编号（0 = 无物体 / 失败 / 类别或盒已满） |
 | 视觉 → 电控 | `f` | 显示完成回执 |
 
-> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为三路固定机位、不再旋转，收到 `b` 只忽略，不再等待。
+> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为三路固定机位、不再旋转。
+> 收到 `b` 只记一条 debug 日志（不置位任何事件），`r` 已从代码里删除。
 
 ### 阶段编排
 
-1. 程序持续读取托盘广角与**识别区三路固定机位**（① ② 斜上方相对、③ 正下方仰视），各自只保留最新一帧；托盘与识别区① 另外录像。
+1. 程序持续读取托盘广角与**识别区三路固定机位**（① ② 斜上方相对、③ 正下方仰视），各自只保留最新一帧；
+   托盘与识别区① 另外录像（三路同时写 mp4 会抢 IO，要全录就再各建 writer）。
 2. **阶段 1**：同时监听 `c` 与 `a`。收到 `c` → 识别托盘各栏，回复 5 位 `1/0`；收到 `a` → 直接进入阶段 2。
-3. **阶段 2**：`a` 一到，从三路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，三路同时拍、误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=3`）。
+3. **阶段 2**：`a` 一到，从三路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，三路同时拍、
+   误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=3`）。
 4. 三张图一次性交给大模型，得到分类编号后回 `0` 或 `1~6`。
 5. 电控动作完成发 `v` → 视觉先上屏，再回 `f`。
 6. 回到第 2 步，直到所有有物体的栏都推到底。
 
 > 兜底：LLM 超时或失败时回 `0`（不回落 YOLO，见下文 `YOLO_FALLBACK`）。查栏失败则保守回全 `1`。
+>
+> **图号 ↔ 机位是写死在 prompt 里的契约**：图1 = ①斜上、图2 = ②斜上、图3 = 正下仰视。
+> 三台相机装错位置会让模型按错误的视角关系推理（见「换 USB 口 / 换相机后怎么做」）。
+
+### 显示屏
+
+- 固定 7 行：6 个类别 + 末行「未归类」。
+- 上电只铺纯黑，收到首个 `a`/`c` 才点亮画表格（`SCREEN_OFF_UNTIL_START=1`）。
+- **「图片」列取机位①的画面**（`DISPLAY_VIEW_INDEX=0`）。不能取机位③：那是正下方仰视，
+  可能完全拍不到本体。要换成 ② 就把 `.env` 里 `DISPLAY_VIEW_INDEX` 设成 `1`。
 
 ### 线程与故障处理
 
-- **四路摄像头线程**（托盘 1 + 识别区 3）：`maxsize=1` 队列只留最新帧；`get_frame_retry` 连续 5 次取不到（或全是废帧）才判故障。
+- **四路摄像头线程**（托盘 1 + 识别区 3）：`maxsize=1` 队列只留最新帧；`get_frame_retry`
+  连续 5 次取不到（或全是近纯色废帧）才判故障。
 - **串口线程**：独立收发，读写异常置位 `stop_event`。
-- **显示线程**：固定 7 行（6 类 + 末行「未归类」）；上电只铺纯黑，收到首个 `a`/`c` 才点亮。
+- **显示线程**：见上；门控用一个「永不清除」的唤醒位，避免和会立即 `clear()` 的事件抢采样。
 - **主线程**：阶段编排。任一上游故障 → 抛 `CameraStopped` → 清理退出；所有等待都带超时，不会永久阻塞。
 
 ---
@@ -222,27 +263,74 @@ GongChuang_Advanced/
 四路相机全部走 `/dev/wave/cam_*`，别名由 `/etc/udev/rules.d/70-wave-cameras.rules` 按
 **USB 物理口**绑定，代码里不再出现 `/dev/videoN`。
 
-| 别名 | 机位 | 物理口（`ID_PATH`） |
-| --- | --- | --- |
-| `cam_pallet` | 托盘上方广角（1280×960） | `platform-fc800000.usb-usb-0:1.2:1.0` |
-| `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc800000.usb-usb-0:1.1:1.0` |
-| `cam_detect_2` | 识别区② 斜上方（与①相对） | `platform-fc880000.usb-usb-0:1.3:1.0` |
-| `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` |
+规则源文件就在仓库里：`deploy/70-wave-cameras.rules`。
+
+| 别名 | 机位 | 物理口（`ID_PATH`） | 控制器 |
+| --- | --- | --- | --- |
+| `cam_pallet` | 托盘上方广角（1280×960） | `platform-fc800000.usb-usb-0:1.2:1.0` | Bus01（fc800000） |
+| `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc800000.usb-usb-0:1.1:1.0` | Bus01（fc800000） |
+| `cam_detect_2` | 识别区② 斜上方（与①相对） | `platform-fc880000.usb-usb-0:1.3:1.0` | Bus04（fc880000） |
+| `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` | Bus04（fc880000） |
+
+安装：
+
+```bash
+sudo cp deploy/70-wave-cameras.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=video4linux --action=add
+ls -l /dev/wave/
+```
 
 规则要点（都是踩过的坑）：
 
-- **不用 `by-id`**：两台相机 `0bda:9143` 的假序列号都是 `200901010001`，`by-id` 名字直接撞车，
-  其中一台干脆没有 `by-id` 名字。
+- **不用 `by-id`**：两台相机 USB 描述符完全相同（`0bda:9143`，假序列号都是 `200901010001`），
+  `by-id` 名字直接撞车，其中一台干脆没有 `by-id` 名字。
 - **属性必须写成 `ENV{ID_PATH}`**：写成 `ID_PATH=="…"` 会被 udev 判成 `Invalid key`，
-  **静默丢弃整条规则**（不报错，只是别名一直不出现）。
+  **静默丢弃整条规则**（不报错，只是别名一直不出现）。自查：`sudo udevadm test /sys/class/video4linux/video0 2>&1 | grep -i invalid`。
 - **必须加 `ATTR{index}=="0"`**：每台 UVC 相机同时暴露 `index0`（采集）与 `index1`（metadata），
   两者 `ID_PATH` 相同；不加判断别名会被后一个覆盖，指过去打不开。
 
-### 带宽：四路是 2+2 分的，别再插回同一个 Hub
+### 带宽：四路是 2+2 分的，别插回同一个 Hub
 
-四路相机分在**两条独立总线**上（`platform-fc800000.usb` 与 `platform-fc880000.usb`），
-每条（480M）只放得下 **2 路** MJPG 流。第 3 路 `STREAMON` 会直接失败，dmesg 报
-`Failed to submit URB 0 (-28)`（`-28` = `ENOSPC` = 等时带宽不足，**不是供电问题**）。
+四路相机分在**两条独立总线**上（`platform-fc800000.usb`、`platform-fc880000.usb`），
+每条（480M）只放得下约 **2 路** MJPG 流。第 3 路 `STREAMON` 会直接失败，dmesg 报：
+
+```text
+uvcvideo 1-1.2.3:1.1: Failed to submit URB 0 (-28).
+```
+
+`-28` = `ENOSPC` = 等时带宽准入失败，**不是供电问题**（供电不足的表现是设备掉线重枚举，不是这个错）。
+排查看 `lsusb -t`：`ehci-platform` 出现两次就是两条独立 480M 总线；Bus06（`xhci 5000M`）是空着的备用口。
+
+### 调试相机机位
+
+> **前提：主程序正在占着四路相机，必须先把服务停掉**，否则相机打不开。
+
+```bash
+# 1) 让出相机
+sudo systemctl stop wave-vision-llm
+pgrep -af main_push_llm           # 应输出为空
+
+# 2) 网页预览（推荐：不依赖 X11，PC 浏览器直接看）
+cd ~/WaveRider_GongChuang_Vision
+python tools/preview_camera.py --camera detect_up1 --http 8080 --tray
+#    PC 浏览器打开  http://<板子IP>:8080/     （热点链路一般是 http://192.168.43.5:8080/）
+
+# 3) 调完位置，恢复主程序
+sudo systemctl start wave-vision-llm
+```
+
+- **`--tray` 这个开关一定要加**（名字是历史遗留，对识别区来说它画的是识别区叠加框）：
+  **蓝框** = 采集端裁出的正方形（1280×720 → 720×720），**红框** = 真正发给大模型的范围
+  （再按 `DETECT_LLM_INSET` 每边内缩 0.13 → 532×532）。
+  调机位时让物体**落在红框里、居中、尽量占满**——那才是模型实际看到的取景。
+- `--camera` 取值：`pallet` / `detect_up1` / `detect_up2` / `detect_down`（旧命令 `detect` = `detect_up1`）。
+- 想在板子自己的屏上开窗口、并同时看「实际发给模型的图」：
+  `DISPLAY=:0 python tools/preview_camera.py --camera detect_up1 --show-llm`
+  窗口模式按键：`q`/`Esc` 退出、`s` 存快照、`o` 开关叠加框、`c` 开关分栏线。
+- 页面连不上（PC 与板子不同网段）就用 SSH 隧道：
+  `ssh -L 8080:localhost:8080 orangepi@192.168.43.5`，再开 `http://localhost:8080/`。
+- 另外可用冒烟测试一次性验四路带宽：`python tools/probe_cameras.py`（走别名，四路各 90 帧）。
 
 ### 换 USB 口 / 换相机后怎么做
 
@@ -251,17 +339,19 @@ GongChuang_Advanced/
 for v in /dev/video*; do echo "== $v"; readlink -f /sys/class/video4linux/$(basename $v)/device; done
 # 2) 拿到 ID_PATH（udev 规则就是按它匹配的）
 for v in 0 2 4 6; do printf "video%s  " $v; udevadm info -q property -n /dev/video$v | grep '^ID_PATH='; done
-# 3) 按新 ID_PATH 改 /etc/udev/rules.d/70-wave-cameras.rules，然后
+# 3) 按新 ID_PATH 改 deploy/70-wave-cameras.rules 并同步到板上，然后
+sudo cp deploy/70-wave-cameras.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=video4linux --action=add
 # 4) 验收：四个别名要指向真实采集节点（index0）
 ls -l /dev/wave/
-python tools/probe_cameras.py     # 走别名，四路 90/90 才算过
+python tools/probe_cameras.py     # 四路 90/90 才算过
 ```
 
-> ⚠️ 图号 ↔ 机位是**写死在 prompt 里的契约**（图1=①斜上、图2=②斜上、图3=正下仰视）。
-> 换相机请把它装到目标机位、插到该机位别名对应的 USB 口，**别随手对调插头**。
-> 拔插不需要 reload 规则（规则没变），只有改了规则文件内容才要 reload。
+> ⚠️ **别名绑的是 USB 物理口，不是相机**。所以「换相机」= 把相机装到目标机位 + 插到该机位别名对应的口，
+> **代码零改动**。如果只是随手对调插头而相机没挪位置，图1/2/3 的画面就串了，prompt 的视角契约被破坏。
+> 拔插**不需要** reload 规则（规则没变，udev 会自动应用到新枚举的设备）；只有改了规则文件内容才要 reload。
+> 改线后记得三处一起更新：`deploy/70-wave-cameras.rules`、本文这张表、`shared/const.py` 的注释。
 
 ---
 
@@ -300,8 +390,11 @@ python main_push_llm.py
 | `LLM_STICKER_DECODE` | `0` | 贴纸解码总开关，`0` 时 label 只取 LLM 给的 kind/描述 |
 | `SCREEN_OFF_UNTIL_START` | `1` | 上电只铺纯黑，收到首个 `a`/`c` 才画表格 |
 | `SCREEN_DPMS` | `0` | `1` 时用 `xset dpms force off/on` 真灭背光（需 x11-xserver-utils） |
+| `DISPLAY_VIEW_INDEX` | 空（=0） | 显示屏「图片」列取哪个机位：`0`=①斜上（默认）、`1`=②斜上、`2`=③正下 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | `http://127.0.0.1:7890` | **必须写进 `.env`**：systemd 不读 `.bashrc` |
 | `NO_PROXY` | `localhost,127.0.0.1,…` | 别把代理自己排除掉 |
+| `CAMERA_PALLET_ID` | 空（=别名） | 覆盖托盘相机路径，默认 `/dev/wave/cam_pallet` |
+| `CAMERA_DETECT_1/2/3` | 空（=别名） | 覆盖识别区三路，默认 `/dev/wave/cam_detect_1/2/3` |
 
 改完重启生效：`sudo systemctl restart wave-vision-llm`（**不需要** daemon-reload）。
 
@@ -343,7 +436,7 @@ LLM 响应: id=… request_id=… service_tier=…
 ### 形状记忆（仅本次运行）
 
 - 词表外形用 `new` 登记为 `unknown_001`，同一件再出现返回 `remembered`；
-- 参考图为该形状的 3 个视角，按 2 列拼图（奇数视角补一格黑），每格 384×384；
+- 参考图为该形状的 3 个固定机位视角，按 2 列拼图（奇数视角补一格黑），每格 384×384；
 - 重启新建会话、重新学习；旧图保留供排查。
 
 ```text
@@ -357,7 +450,7 @@ capture/images/<启动时间>/shape_memory_<会话ID>/
 
 ---
 
-## 部署与开机自启
+## 部署与运行
 
 ### 服务与包装
 
@@ -392,15 +485,57 @@ autologin-user=orangepi
 autologin-user-timeout=0
 ```
 
-`display` 与 `XAUTHORITY` 由 service 注入（`DISPLAY=:0`、`/home/orangepi/.Xauthority`）。
+`DISPLAY` 与 `XAUTHORITY` 由 service 注入（`DISPLAY=:0`、`/home/orangepi/.Xauthority`）。
 
 ### 代理（必须）
 
-板内 mihomo 走 systemd（`mixed-port 7890`，节点必须**美国**），`.env` 里必须有三行 PROXY；否则自启后进程没有代理，表现为**每轮 LLM 失败 → 回 0 丢件**。
+板内 mihomo 走 systemd（`mixed-port 7890`，节点必须**美国**），`.env` 里必须有三行 PROXY；
+否则自启后进程没有代理，表现为**每轮 LLM 失败 → 回 0 丢件**。
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -m 10 -x http://127.0.0.1:7890 https://api.openai.com/v1/models
 # 401 = 通；000/超时 = 先 sudo systemctl restart mihomo 再测
+```
+
+### 手动跑（不用 systemd）
+
+**关键坑**：`deploy/start_vision.sh` 只从 `.env` 里 `sed` 读 `BASE_URL`/`API_KEY` 做网络探针，
+**它不负责把代理和 key 传给 python**——平时那活是 systemd 的 `EnvironmentFile=.env` 干的。
+手动跑不注入的话进程没有 `HTTPS_PROXY`，表现为**每轮 LLM 都失败回 0**，很容易误判成"识别坏了"。
+
+```bash
+cd ~/WaveRider_GongChuang_Vision
+set -a; . ./.env; set +a          # 关键：把 key / 代理三行导进当前 shell
+bash deploy/start_vision.sh       # 走四道门禁，行为和 systemd 一致
+# 或者跳过门禁直接跑：  python main_push_llm.py
+```
+
+两条路径的差别：
+
+| | systemd | 手动 |
+| --- | --- | --- |
+| 四道门禁 | ✅ 自动等 | ✅ 用 `start_vision.sh` 才有 |
+| key / 代理注入 | ✅ `EnvironmentFile` | ⚠️ 要自己 `set -a; . ./.env` |
+| 崩溃自动重启 | ✅ | ❌ 挂了就没了 |
+| 日志 | `journalctl -u wave-vision-llm` | 只在终端里，建议重定向到文件 |
+
+### 只关开机自启（调试期常用）
+
+调相机、改配置时不想让它开机抢设备，但还想保留「一条命令启停」：
+
+```bash
+sudo systemctl disable wave-vision-llm          # 只取消开机自启，不碰当前进程
+systemctl is-enabled wave-vision-llm            # 应显示 disabled
+sudo systemctl start / stop / restart wave-vision-llm   # 照常手动用
+```
+
+### 关闭 / 恢复自启
+
+```bash
+sudo systemctl disable --now wave-vision-llm    # 关（disable 管开机，--now 停当前）
+sudo systemctl enable  --now wave-vision-llm    # 恢复
+systemctl is-enabled wave-vision-llm; pgrep -af main_push_llm
+# 彻底不要了：sudo rm /etc/systemd/system/wave-vision-llm.service && sudo systemctl daemon-reload
 ```
 
 ### 更新板端代码
@@ -418,14 +553,6 @@ ssh orangepi@192.168.43.5 'sudo systemctl restart wave-vision-llm'
 板端那份是独立的，别覆盖。等板上换成 git 之后，这一节可以简化成
 `git pull --ff-only && sudo systemctl restart wave-vision-llm`。
 
-### 关闭 / 恢复自启
-
-```bash
-sudo systemctl disable --now wave-vision-llm    # 关（disable 管开机，--now 停当前）
-sudo systemctl enable  --now wave-vision-llm    # 恢复
-systemctl is-enabled wave-vision-llm; pgrep -af main_push_llm
-```
-
 ---
 
 ## 排查手册
@@ -440,7 +567,28 @@ pgrep -af 'main_push_llm|start_vision'
 systemctl --failed --no-pager
 ```
 
-判读要点：`启动主程序` 的时间应该紧贴开机时刻；`pgrep` 只能有一行；`systemctl --failed` 里 `dnsmasq` 失败是无害的（端口 53 被占，与视觉链路无关）。
+判读要点：`启动主程序` 的时间应该紧贴开机时刻；`pgrep` 只能有一行；`systemctl --failed` 里
+`dnsmasq` 失败是无害的（端口 53 被占，与视觉链路无关）。
+
+### 相机
+
+```bash
+ls -l /dev/wave/                                          # 四个别名在不在、指向哪个 videoN
+v4l2-ctl --list-devices                                   # 相机枚举（注意别把 video-dec0/enc0 当相机）
+lsusb -t                                                  # 几条总线、相机分别挂在哪
+sudo dmesg | tail -40 | grep -iE 'uvc|bandwidth|ENOSPC|reset'
+python tools/probe_cameras.py                             # 四路各 90 帧的冒烟测试
+```
+
+已知坑：
+
+- **只有 2 路能开、另 2 路 `Failed to submit URB 0 (-28)`** → 四路挤到同一条 480M 总线了（等时带宽不足）。
+  把线拆到两条总线（见「带宽」一节），或换带独立供电的 USB3 Hub。
+- **`/dev/wave/` 不存在或别名残缺** → udev 规则没装 / 没 reload / `ID_PATH` 变了。注意
+  `ID_PATH==""` 写法会被 udev 静默丢弃，用 `sudo udevadm test` 自查。
+- **`摄像头打开失败` 而且 `pgrep` 有两个实例** → 手动跑的和服务在抢设备，先 `sudo systemctl stop wave-vision-llm`。
+- **预览打不开相机** → 同上，主程序占着；调试相机必须先停服务。
+- `/dev/video-dec0`、`/dev/video-enc0` 是 RK3588 的硬编解码节点，**不是相机**，写脚本别用 `/dev/video*` 裸通配。
 
 ### 网络（分层判定）
 
@@ -462,12 +610,15 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
   修法是确认主路（USB 网卡）在，再 `sudo systemctl restart mihomo`。
 - **冷启动后 1~5 分钟才通** → mihomo 起得比外网早，第一次拉订阅失败。可用 systemd drop-in 让 mihomo 等外网后再启动。
 - `Request timed out.` ≠ `Connection error.`：前者是隧道卡住（DNS/节点），后者是隧道建不起来（代理没起/节点死）。
+- 主路是 USB 网卡（metric 5）、热点是备路且**是唯一 SSH 入口**，两个都不能随意断开。
 
 ### 显示
 
 - **整屏玫红 / 全黑**：rockchip GL 驱动问题，`shared/show.py` 已强制 `SDL_VIDEODRIVER=x11` + 软件渲染。
-- **画面糊、分辨率掉到 800×480**：屏重新握手时 X 读不到 EDID，退到内置兜底模式。`tools/hdmi_watch.py` 看门狗会盯 EDID/模式并自动重同步（`deploy/wave-hdmi-watch.service`）。
-- **屏一直全黑**：先确认是不是**待机黑屏**（`SCREEN_OFF_UNTIL_START=1`，等首个 `a`/`c` 才画表格）；日志里应有「显示屏待机中（纯黑）」。
+- **画面糊、分辨率掉到 800×480**：屏重新握手时 X 读不到 EDID，退到内置兜底模式。`tools/hdmi_watch.py`
+  看门狗会盯 EDID/模式并自动重同步（`deploy/wave-hdmi-watch.service`）。
+- **屏一直全黑**：先确认是不是**待机黑屏**（`SCREEN_OFF_UNTIL_START=1`，等首个 `a`/`c` 才画表格）；
+  日志里应有「显示屏待机中（纯黑）」。
 
 ### 常见故障对照
 
@@ -475,9 +626,10 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | --- | --- | --- |
 | 每轮都 `识别超过 15 秒，已放弃` | 网络/代理不通 | 见上面网络分层 |
 | `摄像头打开失败` 且有两个实例 | 手动跑的和服务抢设备 | `sudo systemctl stop wave-vision-llm` 后确认 `pgrep` 为空 |
+| 启动日志「相机别名不存在」 | udev 规则没生效 / 换了 USB 口 | `ls -l /dev/wave/`；按新 `ID_PATH` 改 `70-wave-cameras.rules` 后 reload + trigger |
+| 某些相机 0 帧、dmesg 有 `URB 0 (-28)` | 四路挤在同一条 480M 总线 | 拆到两条总线（见「带宽」） |
 | `缺少形状示例照片` / `空场景参考照片` | `llm/example/` 文件不齐 | 补齐后重启（缺哪个日志会写全路径） |
 | `Recognition display stopped:` | 显示线程当场死了 | 查 X 会话与 `xrandr` |
-| 启动日志「相机别名不存在」 | udev 规则没生效 / 换了 USB 口 | `ls -l /dev/wave/`；按新 `ID_PATH` 改 `70-wave-cameras.rules` 后 reload + trigger（见「相机与设备别名」） |
 | 多次识别同件结果不同 | 采图信息不足或 prompt 边界 | 看 `pending/*/review.json` 的原因原文 |
 | 日志时间戳错乱 | 板子无 RTC，开机头半分钟时钟是上次关机时间 | `timedatectl set-ntp true` |
 
@@ -487,6 +639,11 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 | 脚本 | 用途 |
 | --- | --- |
+| `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
+| `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框 |
+| `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |
+| `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
+| `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
 | `net_check.sh` | 启动前网络自检（出口 IP/国家、代理端口、key、模型可调用），退出码 = 不合格项数 |
 | `probe_openai_api.py` | 接口兼容性探针：`service_tier`、`reasoning`、缓存字段、真实请求块形状 |
 | `probe_model_classes.py` | 比对 `.rknn` 真实类别数与代码列表 |
@@ -496,17 +653,35 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | `summarize_log.py` | 日志汇总（`python tools/summarize_log.py <日志> [报告.md] [明细.csv]`） |
 | `dump_round_status.py` | 每轮 status/color/shape/reasoning 一览 |
 | `timing_breakdown.py` | 按时间戳拆整轮各段耗时 |
-| `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
-| `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
-| `preview_camera.py` | 摄像头预览（`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可在 PC 浏览器看 MJPEG） |
-| `capture.py` | 抽帧 / 录像 |
 | `crop_preview.py` | 按四边比例裁剪预览（`--use-const` 直接读 const.py） |
 | `ab_reasoning.py` / `tier_ab.sh` / `probe_images.py` | 耗时与档位 A/B 对比（调优用） |
+
+### 常用：相机
+
+```bash
+python tools/probe_cameras.py                                  # 走别名，验四路带宽
+python tools/preview_camera.py --camera detect_up1 --http 8080 --tray
+# 只想单独测某几路：--devices 要 4 个参数，拿不存在的节点占位即可（占位会被跳过）
+python tools/probe_cameras.py --devices /dev/video0 /dev/video4 /dev/none /dev/none
+```
 
 ### 离线测试（PC，无需硬件）
 
 ```bash
-python test_llm.py classify <图1> <图2> <图3>      # 三视角分类
+python test_llm.py classify <图1> <图2> <图3>      # 三机位分类
 python test_llm.py pallet   <托盘俯视图>            # 查栏
 python tools/check_examples.py                      # 示例图自检
 ```
+
+---
+
+## 待办 / 已知遗留
+
+- **空场景参考图只有 1 张**（`llm/example/detect_area_empty.jpg`），而识别区现在是三个机位。
+  prompt 里「第 1 张是识别区空场景参考照片」这套编号是单张设计的；结构装好后要采三个机位各一张，
+  再一起调整编号段（`tools/capture.py` 已能分别采三个机位）。
+- **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
+- `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
+- `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。
+- 赛后轮换两把 key：本项目的 LLM key（曾在聊天/`journalctl` 露过明文）、队友的 VolcEngine Ark key
+  （团队仓库历史里有）。
