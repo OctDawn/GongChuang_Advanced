@@ -20,6 +20,7 @@ from shared.const import (
     COLUMN_COUNT, TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX,
     LASER_SENSOR_ON_LEFT,
     PALLET_LLM_INSET, DETECT_LLM_INSET, FRAME_RETRY_TIMES,
+    DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
 )
 
 logger = logging.getLogger("wave.vision")
@@ -410,8 +411,46 @@ def crop_pallet_llm(frame):
     return crop_by_ratio(crop_tray_region(frame), **PALLET_LLM_INSET)
 
 
+def _resize_long_side(image, max_side):
+    """等比缩小到长边不超过 max_side（只缩不放；max_side<=0 视为不限）。"""
+    height, width = image.shape[:2]
+    longest = max(height, width)
+    if max_side <= 0 or longest <= max_side:
+        return image
+    scale = max_side / float(longest)
+    return cv2.resize(image,
+                      (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+                      interpolation=cv2.INTER_AREA)
+
+
+def detect_frame_preprocessed(frame):
+    """采集端预处理，与 main_push_llm 传给 read_camera 的 crop_square 保持一致。
+
+    square 模式：裁居中方正（1280x720 -> 720x720）。
+    full   模式：原样返回，全幅交给 crop_detect_llm 统一缩放。
+    """
+    if DETECT_CROP_MODE == "full":
+        return frame
+    return crop_to_square(frame)
+
+
 def crop_detect_llm(frame):
-    """阶段2 送大模型的识别区图：正方形画面 + DETECT_LLM_INSET 内缩。"""
+    """阶段2 送大模型的识别区图；具体形状由 DETECT_CROP_MODE 决定。
+
+    square（默认）：正方形画面 + DETECT_LLM_INSET 内缩。
+        前提是 frame 已经过 crop_to_square（线上在 read_camera(crop_square=True) 里做）。
+        忘了这一步不会报错，只会静默得到一个长方形（1280x720 → 947x533），
+        所以这里加条告警，避免这种错悄无声息地进生产。
+    full：全幅等比缩小 + DETECT_FULL_INSET 微调，不裁边。
+    """
+    if DETECT_CROP_MODE == "full":
+        return crop_by_ratio(_resize_long_side(frame, DETECT_SEND_MAX_SIDE),
+                             **DETECT_FULL_INSET)
+
+    height, width = frame.shape[:2]
+    if abs(height - width) > 2:
+        logger.warning("识别区图不是正方形（%dx%d）：应先 crop_to_square，"
+                       "否则内缩比例会把它裁成矩形", width, height)
     return crop_by_ratio(frame, **DETECT_LLM_INSET)
 
 

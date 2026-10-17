@@ -21,6 +21,7 @@
 - [更新记录](#更新记录)
 - [项目结构](#项目结构)
 - [当前流程](#当前流程) —— 串口协议 / 阶段编排 / 线程与故障处理
+- [视觉调参（离线调试）](#视觉调参离线调试) —— 不装机械也能跑通整条链路
 - [相机与设备别名（udev）](#相机与设备别名udev) —— 别名表 / 带宽 / **调试机位** / 换线流程
 - [运行前配置](#运行前配置) —— 环境 / `.env` / 图片链路 / 缓存 / 形状记忆
 - [部署与运行](#部署与运行) —— 服务与门禁 / 图形会话 / 代理 / 手动跑 / 自启开关 / 更新板端
@@ -32,6 +33,14 @@
 ## 更新记录
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
+
+**10/17 hrx**
+- 新增 DETECT_CROP_MODE：全幅/居中两种送图
+- 修离线脚本次裁裁剪不一致
+
+**10/17 hrx**
+- 新增 offline_debug：拍三路+跑 prompt+计时
+- 工具自动读 .env，手动跑不再缺 key
 
 **10/16 hrx**
 - 识别区改三路固定机位，取消 r/b 握手
@@ -258,6 +267,94 @@ GongChuang_Advanced/
 
 ---
 
+## 视觉调参（离线调试）
+
+机械/电控没装好也能调视觉：**只拍图 + 跑 prompt + 记录**，完全不碰串口、显示屏、YOLO。
+
+工具是 `tools/offline_debug.py`，它复用线上同一套模块（`llm.qw` / `llm.prompt` /
+`llm.shape_recognition` / `llm.shape_memory` / `llm.empty_examples`），
+所以图号顺序、裁剪、prompt、校验、形状记忆与线上完全一致——**离线跑出什么，线上就是什么**。
+
+```bash
+# 一步到底：三路各拍一张 + 跑 1 次
+python tools/offline_debug.py --capture
+
+# 拍一组，跑 3 次看稳定性和耗时分布
+python tools/offline_debug.py --capture --tag 蓝薄壁4棱 --runs 3
+
+# 用最近一次采集反复跑（不用再开相机）
+python tools/offline_debug.py --latest --runs 5
+
+# 用自己准备的三张图（顺序必须：①斜上 ②斜上 ③正下仰视）
+python tools/offline_debug.py --images a.jpg b.jpg c.jpg
+
+# 只走流程不发请求：验裁剪/尺寸/命名（不需要 key）
+python tools/offline_debug.py --latest --dry-run
+
+# 看历史采集
+python tools/offline_debug.py --list
+```
+
+**前置条件**：主程序在跑会占着相机 → 先 `sudo systemctl stop wave-vision-llm`。
+工具会**自动读项目根目录的 `.env`**（不覆盖已有环境变量），所以不用先 `source`。
+
+输出在 `capture/offline/<时间戳>[_tag]/`：
+
+| 文件 | 内容 |
+| --- | --- |
+| `view_1..3.jpg` | 相机原始帧（未裁剪） |
+| `sent_1..3.jpg` | **模型真正看到的那张**（crop_square + `DETECT_LLM_INSET` → 532×532） |
+| `reply_01_classify.txt` | 模型原始回复（重试带 `_try2` 后缀，每次都留） |
+| `result.jsonl` | 每次 run 一行：status/颜色/形状/贴纸、总耗时、真实请求耗时、token、payload、错误 |
+| `meta.json` | 设备、模型、缓存模式、机位顺序、时间戳 |
+
+采集时会同时打印每路的 `mean/std` 并标记疑似废帧（过曝/全黑/未就绪）。
+跑完打一张汇总：耗时中位/均值/最值、真实请求耗时、`N/M 次结果一致`、缓存命中率。
+
+两个行为约定：
+
+- **每次 run 默认新建形状记忆**（等于“程序刚启动”），所以 `new` 不会被上一次的 `remembered` 干扰；
+  要模拟“同一场次里连续第 N 件”，加 `--keep-memory`。
+- `status`（known / remembered / new / uncertain / empty）是从模型**原始回复**里解析的，
+  不靠返回值反推——所以 `new` 和 `remembered` 能分清。
+
+### 送图尺寸与速度
+
+识别区送什么图由两个环境变量控制，**默认 `square`（与原来完全一致，不动就不变）**：
+
+| 配置 | 实际送模型尺寸 | tokens/图（实测标度） | 视野 |
+| --- | --- | --- | --- |
+| `DETECT_CROP_MODE=square`（默认） | 532×532 | ≈ 300 | **只看中间 720 宽**，边角被切掉 |
+| `full` + `DETECT_SEND_MAX_SIDE=768` | 768×432 | ≈ 370 | 全幅（细节打折） |
+| `full` + `DETECT_SEND_MAX_SIDE=1024` | 1024×576 | ≈ 645 | 全幅 ✅ 推荐 |
+| `full` + `DETECT_SEND_MAX_SIDE=1280` | 1280×720（原图） | ≈ 1035 | 全幅、细节不损 |
+
+要点（**10/17 实测**，不是估算）：
+
+- **token ≈ 像素面积 / 890**，与“512 分块”无关。所以 532² ≈ 300 tokens/图，
+  1024×576 ≈ 645，1280×720 ≈ 1035。
+- 从 `square` 换到 `full` + 1024：prompt 7944 → 8979，**每图多 345，整体 +13%**；
+  请求耗时中位 4.39s → 4.05s——**差异完全在单次波动（2.7~6.9s）的噪声里**。
+- **质量差距是决定性的**：同一组图上 `square` 三次给了三个答案（其中一次模型自述
+  “物体在各视角中均被画面截断”），`full` + 1024 三次全对且一致。
+- **坑：`LLM_MAX_SIDE` 会二次封顶**。`qw.py` 发送前还有一道 `_downscale(…, LLM_MAX_SIDE)`，
+  你设 `DETECT_SEND_MAX_SIDE=1280` 但 `LLM_MAX_SIDE=1024` 时，实际送图仍是 1024×576
+  （payload/token 一模一样）。要真发原图，**两个都要改**。
+  `tools/offline_debug.py` 在检测到这种组合时会打 ⚠。
+- 三个机位是**同一物体**，信息有冗余；真要极简，可以单张全幅 + 两张小图，但目前不支持分开设。
+
+**别猜，实测**（同一个 session 的图，只改环境变量）：
+
+```bash
+python tools/offline_debug.py --latest --runs 3                                        # square 基线
+DETECT_CROP_MODE=full DETECT_SEND_MAX_SIDE=1024 python tools/offline_debug.py --latest --runs 3
+DETECT_CROP_MODE=full DETECT_SEND_MAX_SIDE=1280 LLM_MAX_SIDE=1280 python tools/offline_debug.py --latest --runs 3
+```
+
+看汇总里的 token 数（缓存命中那行）和「真实请求耗时」：增幅符合预期、结果没变差，就写进 `.env` 定下来。
+
+---
+
 ## 相机与设备别名（udev）
 
 四路相机全部走 `/dev/wave/cam_*`，别名由 `/etc/udev/rules.d/70-wave-cameras.rules` 按
@@ -325,6 +422,12 @@ sudo systemctl start wave-vision-llm
   （再按 `DETECT_LLM_INSET` 每边内缩 0.13 → 532×532）。
   调机位时让物体**落在红框里、居中、尽量占满**——那才是模型实际看到的取景。
 - `--camera` 取值：`pallet` / `detect_up1` / `detect_up2` / `detect_down`（旧命令 `detect` = `detect_up1`）。
+- **裁剪发生在软件里，不在相机里**：相机永远输出 1280×720，采集线程再做 `crop_to_square` →
+  720×720（**左右各切掉 280 px，只有中间那 720 宽有效**）→ 内缩 0.13 → 532×532 送给模型。
+  所以**不要去把相机分辨率改成正方形**：多数 UVC 不支持，会退化成缩放或默认值，反而更糊。
+  安装时要保证物体落在中间那个正方里（就是 `--tray` 的蓝框）。
+  **如果物体可能出现在画面四角**（新机位容易这样），把 `DETECT_CROP_MODE` 设成 `full`，
+  改成“不裁边 + 等比缩小”（见「送图尺寸与速度」）。
 - 想在板子自己的屏上开窗口、并同时看「实际发给模型的图」：
   `DISPLAY=:0 python tools/preview_camera.py --camera detect_up1 --show-llm`
   窗口模式按键：`q`/`Esc` 退出、`s` 存快照、`o` 开关叠加框、`c` 开关分栏线。
@@ -391,6 +494,8 @@ python main_push_llm.py
 | `SCREEN_OFF_UNTIL_START` | `1` | 上电只铺纯黑，收到首个 `a`/`c` 才画表格 |
 | `SCREEN_DPMS` | `0` | `1` 时用 `xset dpms force off/on` 真灭背光（需 x11-xserver-utils） |
 | `DISPLAY_VIEW_INDEX` | 空（=0） | 显示屏「图片」列取哪个机位：`0`=①斜上（默认）、`1`=②斜上、`2`=③正下 |
+| `DETECT_CROP_MODE` | `square` | 识别区送图方式：`square`=居中方正 720→内缩 532（物体在边角会被切掉）；`full`=全幅缩放（见「送图尺寸与速度」） |
+| `DETECT_SEND_MAX_SIDE` | `1024` | `full` 模式的长边上限（只缩不放）：`768` 更快 / `1024` 均衡 / `1280` 原图直发 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | `http://127.0.0.1:7890` | **必须写进 `.env`**：systemd 不读 `.bashrc` |
 | `NO_PROXY` | `localhost,127.0.0.1,…` | 别把代理自己排除掉 |
 | `CAMERA_PALLET_ID` | 空（=别名） | 覆盖托盘相机路径，默认 `/dev/wave/cam_pallet` |
@@ -639,6 +744,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 | 脚本 | 用途 |
 | --- | --- |
+| `offline_debug.py` | **离线调参主力**：三路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
 | `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
 | `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框 |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |

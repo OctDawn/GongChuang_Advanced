@@ -36,6 +36,7 @@ from shared.const import (
     CAMERA_PALLET_ID, DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES,
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
+    DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE,
     MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY, STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
     LASER_SENSOR_ON_LEFT,
     SAVE_LLM_RESPONSES, LLM_RESPONSE_DIR,
@@ -482,6 +483,12 @@ def _run(empty_examples, shape_examples, fallback):
     os.makedirs(os.path.join(image_dir, "original"), exist_ok=True)
 
     large_pallet_cap = initial_cap(CAMERA_PALLET_ID, "托盘上方广角摄像头", PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS)
+    # 识别区送图方式：square = 采集端裁居中方正（省时，但边角会被切掉）；
+    # full = 保留全幅，交给 crop_detect_llm 等比缩小。默认 square。
+    detect_crop_square = DETECT_CROP_MODE != "full"
+    logger.info("识别区送图模式: %s%s", DETECT_CROP_MODE,
+                "（居中裁 720x720）" if detect_crop_square
+                else f"（全幅，长边 <= {DETECT_SEND_MAX_SIDE}px）")
     detect_caps = [
         initial_cap(camera_id, name, DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
         for camera_id, name in zip(DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES)
@@ -499,7 +506,7 @@ def _run(empty_examples, shape_examples, fallback):
     detect_cameras = [
         threading.Thread(
             target=read_camera,
-            args=(cap, name, frame_queue, fps_queue, stop_event, True),
+            args=(cap, name, frame_queue, fps_queue, stop_event, detect_crop_square),
             daemon=True,
         )
         for cap, name, frame_queue, fps_queue in zip(

@@ -41,7 +41,7 @@ from llm.prompt import PROMPT_PALLET_COLUMNS
 from llm.shape_memory import ShapeMemory
 from llm.shape_recognition import ShapeRecognizer
 from llm.empty_examples import load_empty_examples, load_shape_examples
-from shared.common import crop_pallet_llm
+from shared.common import crop_pallet_llm, crop_to_square
 from shared.const import COLUMN_COUNT, STAGE_TWO_DETECTION_COUNT
 
 logging.basicConfig(level=logging.INFO,
@@ -89,6 +89,9 @@ def cmd_classify(args):
         sys.exit(f"classify 需要恰好 {STAGE_TWO_DETECTION_COUNT} 张视角图片"
                  "（a 一到，三路固定机位各取一帧）")
     frames = _read(args.images)
+    # 线上识别区帧在采集线程里已经是 crop_to_square 的 720x720；
+    # 这里容错处理：传入原图时补上这一步（已裁过的方图是无操作）。
+    frames = [crop_to_square(frame) for frame in frames]
 
     empty = load_empty_examples()
     shape_examples = load_shape_examples()

@@ -131,6 +131,19 @@ PALLET_LLM_INSET = {"left": 0.01, "top": 0.01, "right": 0.03, "bottom": 0.03}
 #   右、上各 1/6 后约 600x600；左、下暂不裁。
 DETECT_LLM_INSET = {"left": 0.13 , "top": 0.13, "right": 0.13, "bottom": 0.13}
 
+# ---- 识别区送模型的方式（影响速度与视野） ----
+#   "square"（默认）：采集线程裁居中方正 720x720，这里再四边内缩 0.13 -> 532x532。
+#                     1 张图只占 1 个视觉 tile，最省时。
+#                     代价：1280 宽里左右各丢 280 px，**物体跑到左右两侧会被直接切掉**。
+#   "full"          ：不裁边，保留全幅，等比缩小到长边不超过 DETECT_SEND_MAX_SIDE，
+#                     再按 DETECT_FULL_INSET 轻微内缩。物体可能出现在画面四角时用这个。
+DETECT_CROP_MODE = os.environ.get("DETECT_CROP_MODE", "square").strip().lower()
+# full 模式的长边上限（只缩不放）：
+#   1024 -> 1024x576（4 tiles）   768 -> 768x432（2 tiles）   1280 -> 原图直发（6 tiles）
+DETECT_SEND_MAX_SIDE = int(os.environ.get("DETECT_SEND_MAX_SIDE", "1024"))
+# full 模式的内缩；默认不裁（0 = 保留全部视野）。想去掉镜头畸变边缘可调成 0.02。
+DETECT_FULL_INSET = {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+
 # 需要优先判定的特权形状名称，检测到后，如果置信度高于 PRIVILEGED_SHAPE_CONFIDENCE，则直接使用该形状类别而不考虑其他形状的置信度
 PRIVILEGED_SHAPES = ['cylinder_thinWalled', 'prism3_thinWalled', 'prism4_thinWalled', 'prism5_thinWalled']
 PRIVILEGED_SHAPE_CONFIDENCE = 0.8
