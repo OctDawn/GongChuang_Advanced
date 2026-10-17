@@ -29,6 +29,12 @@ import threading
 import time
 from contextlib import ExitStack
 
+# 手动启动（不经 systemd）也要读 .env：shared.const / llm.qw 都在 import 期读环境变量，
+# 所以必须在它们之前执行。已存在的变量不覆盖，systemd 注入的仍然优先。
+from shared.dotenv import load_dotenv  # noqa: E402
+
+DOTENV_COUNT = load_dotenv()
+
 import cv2
 
 from shared.const import (
@@ -594,6 +600,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    logger.info(".env 载入 %d 项（已存在的环境变量不覆盖）", DOTENV_COUNT)
     empty_examples = load_empty_examples()
     shape_examples = load_shape_examples()
     # YOLO_FALLBACK=0：完全不加载 YOLO 回落模型（省启动时间与内存）；

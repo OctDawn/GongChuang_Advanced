@@ -67,25 +67,9 @@ except (AttributeError, OSError):
 
 
 def load_dotenv(path):
-    """.env → os.environ（不覆盖已有值）。必须在 import llm.* 之前调用：
-
-    qw.py 在模块级读 DASHSCOPE_* / LLM_*，导入后再改环境变量就不生效了。
-    """
-    if not os.path.isfile(path):
-        return 0
-    loaded = 0
-    with open(path, encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = value
-                loaded += 1
-    return loaded
+    """转调 shared/dotenv.py（同一份实现，避免两份解析逻辑漂移）。"""
+    from shared.dotenv import load_dotenv as _load_dotenv
+    return _load_dotenv(path)
 
 
 ENV_LOADED = load_dotenv(os.path.join(ROOT, ".env"))

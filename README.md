@@ -742,16 +742,21 @@ curl -s -o /dev/null -w '%{http_code}\n' -m 10 -x http://127.0.0.1:7890 https://
 
 ### 手动跑（不用 systemd）
 
-**关键坑**：`deploy/start_vision.sh` 只从 `.env` 里 `sed` 读 `BASE_URL`/`API_KEY` 做网络探针，
-**它不负责把代理和 key 传给 python**——平时那活是 systemd 的 `EnvironmentFile=.env` 干的。
-手动跑不注入的话进程没有 `HTTPS_PROXY`，表现为**每轮 LLM 都失败回 0**，很容易误判成"识别坏了"。
+**`main_push_llm.py` 启动时会自己读 `.env`**（`shared/dotenv.py`，在 import
+`shared.const` / `llm.qw` **之前**执行——那两个模块在 import 期就读环境变量）。
+所以直接跑就行，不需要 `set -a`：
 
 ```bash
 cd ~/WaveRider_GongChuang_Vision
-set -a; . ./.env; set +a          # 关键：把 key / 代理三行导进当前 shell
-bash deploy/start_vision.sh       # 走四道门禁，行为和 systemd 一致
-# 或者跳过门禁直接跑：  python main_push_llm.py
+python main_push_llm.py           # 自己加载 .env
+# 或者走门禁：  bash deploy/start_vision.sh
 ```
+
+- **不覆盖已有变量**：systemd 注入的、或命令行 `FOO=1 python …` 传进来的优先。
+- 启动日志第二行会打 `.env 载入 N 项`；`N=0` 说明 `.env` 不在项目根目录。
+- 老写法 `set -a; . ./.env; set +a` 仍然可用，只是不再必需。
+- **历史教训**：这个坑曾让「送图模式」静默退回 `square`、`LLM_FALLBACK_TIMEOUT` 退回 35 秒，
+  而且表面一切正常——所以现在改成代码兜底。
 
 两条路径的差别：
 
