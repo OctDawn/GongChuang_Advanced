@@ -4,7 +4,7 @@
 适用于「浙江省大学生工程实践与创新能力大赛·智能分拣赛项」。
 
 - **当前唯一入口**：`main_push_llm.py`（视觉大模型识别，本地 NPU 仅作可选回落）
-- **四路相机**：托盘广角 1 路 + 识别区**三路固定机位** 3 路（识别区已取消旋转）
+- **五路相机**：托盘广角 1 路 + 识别区**四路固定机位** 4 路（识别区已取消旋转）
 - **启动方式**：`bash deploy/start_vision.sh`（带四道就绪门禁），或手动 `python main_push_llm.py`
 - **开机自启**：`deploy/wave-vision-llm.service`（systemd）
 
@@ -22,6 +22,7 @@
 - [项目结构](#项目结构)
 - [当前流程](#当前流程) —— 串口协议 / 阶段编排 / 线程与故障处理
 - [视觉调参（离线调试）](#视觉调参离线调试) —— 不装机械也能跑通整条链路
+- [识别区四路机位（含回退三路）](#识别区四路机位含回退三路) —— 接线/带宽/对比/回退
 - [相机与设备别名（udev）](#相机与设备别名udev) —— 别名表 / 带宽 / **调试机位** / 换线流程
 - [运行前配置](#运行前配置) —— 环境 / `.env` / 图片链路 / 缓存 / 形状记忆
 - [部署与运行](#部署与运行) —— 服务与门禁 / 图形会话 / 代理 / 手动跑 / 自启开关 / 更新板端
@@ -35,6 +36,8 @@
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
 **10/17 hrx**
+- 识别区定版四路，④ 水平侧视上线
+- 机位数改环境变量；支持试验第 4 路
 - 例图改 ASCII 命名，薄壁/实心成对
 - 识别区空场景拆顶部/底部两张
 - 补“只有一个视角能看到开口”判据
@@ -223,7 +226,7 @@ GongChuang_Advanced/
 
 ## 当前流程
 
-四路相机推送版（托盘广角 1 + 识别区三路固定机位 3），视觉只做识别与显示，机械/电控负责动作。
+五路相机（托盘广角 1 + 识别区四路固定机位 4），视觉只做识别与显示，机械/电控负责动作。
 
 ### 串口协议
 
@@ -236,17 +239,17 @@ GongChuang_Advanced/
 | 视觉 → 电控 | `0` / `1~6` | 分类编号（0 = 无物体 / 失败 / 类别或盒已满） |
 | 视觉 → 电控 | `f` | 显示完成回执 |
 
-> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为三路固定机位、不再旋转。
+> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为四路固定机位、不再旋转。
 > 收到 `b` 只记一条 debug 日志（不置位任何事件），`r` 已从代码里删除。
 
 ### 阶段编排
 
-1. 程序持续读取托盘广角与**识别区三路固定机位**（① ② 斜上方相对、③ 正下方仰视），各自只保留最新一帧；
-   托盘与识别区① 另外录像（三路同时写 mp4 会抢 IO，要全录就再各建 writer）。
+1. 程序持续读取托盘广角与**识别区四路固定机位**（① ② 斜上方相对、③ 正下方仰视、④ 水平侧视），各自只保留最新一帧；
+   托盘与识别区① 另外录像（四路同时写 mp4 会抢 IO，要全录就再各建 writer）。
 2. **阶段 1**：同时监听 `c` 与 `a`。收到 `c` → 识别托盘各栏，回复 5 位 `1/0`；收到 `a` → 直接进入阶段 2。
-3. **阶段 2**：`a` 一到，从三路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，三路同时拍、
-   误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=3`）。
-4. 三张图一次性交给大模型，得到分类编号后回 `0` 或 `1~6`。
+3. **阶段 2**：`a` 一到，从四路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，四路同时拍、
+   误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=4`）。
+4. 四张图一次性交给大模型，得到分类编号后回 `0` 或 `1~6`。
 5. 电控动作完成发 `v` → 视觉先上屏，再回 `f`。
 6. 回到第 2 步，直到所有有物体的栏都推到底。
 
@@ -281,7 +284,7 @@ GongChuang_Advanced/
 所以图号顺序、裁剪、prompt、校验、形状记忆与线上完全一致——**离线跑出什么，线上就是什么**。
 
 ```bash
-# 一步到底：三路各拍一张 + 跑 1 次
+# 一步到底：四路各拍一张 + 跑 1 次
 python tools/offline_debug.py --capture
 
 # 拍一组，跑 3 次看稳定性和耗时分布
@@ -290,7 +293,7 @@ python tools/offline_debug.py --capture --tag 蓝薄壁4棱 --runs 3
 # 用最近一次采集反复跑（不用再开相机）
 python tools/offline_debug.py --latest --runs 5
 
-# 用自己准备的三张图（顺序必须：①斜上 ②斜上 ③正下仰视）
+# 用自己准备的一组图（顺序必须：①斜上 ②斜上 ③正下仰视 ④水平侧视）
 python tools/offline_debug.py --images a.jpg b.jpg c.jpg
 
 # 只走流程不发请求：验裁剪/尺寸/命名（不需要 key）
@@ -346,7 +349,7 @@ python tools/offline_debug.py --list
   你设 `DETECT_SEND_MAX_SIDE=1280` 但 `LLM_MAX_SIDE=1024` 时，实际送图仍是 1024×576
   （payload/token 一模一样）。要真发原图，**两个都要改**。
   `tools/offline_debug.py` 在检测到这种组合时会打 ⚠。
-- 三个机位是**同一物体**，信息有冗余；真要极简，可以单张全幅 + 两张小图，但目前不支持分开设。
+- 四个机位是**同一物体**，信息有冗余；真要极简，可以单张全幅 + 两张小图，但目前不支持分开设。
 
 **别猜，实测**（同一个 session 的图，只改环境变量）：
 
@@ -360,19 +363,98 @@ DETECT_CROP_MODE=full DETECT_SEND_MAX_SIDE=1280 LLM_MAX_SIDE=1280 python tools/o
 
 ---
 
+## 识别区四路机位（含回退三路）
+
+**现状：识别区是 4 路**（`STAGE_TWO_DETECTION_COUNT=4` 已是默认）：①② 斜上相对、③ 正下仰视、
+④ 水平侧视。④ 是用来补 ①② 的死角：45° 俯视会把两侧竖直面压扁，而 ④ 平视正对竖直面，
+对「薄壁开口 / 壁厚」这类判据是直接加分。
+
+想退回 3 路：`.env` 里写 `STAGE_TWO_DETECTION_COUNT=3`，别名、图号、prompt 机位说明、
+形状记忆视角数全部自动跟着变，**代码一行不用改**。
+
+### 第 1 步：接线（先过带宽这一关）
+
+铁律：**每条 480M 总线最多 2 路 MJPG 流**（第 3 路 `STREAMON` 直接 `ENOSPC`）。
+现在是 5 路（托盘 + 4 路识别区），必须分散到 **≥3 条总线**（2+2+1 或 2+1+2）。
+
+```bash
+lsusb -t          # ehci-platform 出现几次，就是几条独立 480M
+```
+
+- **坑**：把“新相机 + 现有相机”接到一个 Hub、再把 Hub 插到已经 2 路的口上 → 那一路变 3 路，必挂。
+- 优先用**空着的 xhci**：Bus06 是 5000M 的 USB3 口，USB2 相机会落在 Bus05 的 480M 侧，
+  而 Bus05 现在只有 ZTE 网卡（几乎不占带宽）——插到 USB3 口是性价比最高的一路。
+- 接好后再跑一次 `lsusb -t` 确认每路所在总线，然后拿 ID_PATH：
+
+```bash
+for v in /dev/video*; do printf "%s  " "$v"; udevadm info -q property -n "$v" | grep '^ID_PATH='; done
+```
+
+### 第 2 步：钉别名
+
+在 `/etc/udev/rules.d/70-wave-cameras.rules` 加一条（模板在 `deploy/70-wave-cameras.rules` 末尾，
+已经注释好），把 `ID_PATH` 换成新相机的真实值：
+
+```text
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="<新相机>", SYMLINK+="wave/cam_detect_4"
+```
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=video4linux --action=add
+ls -l /dev/wave/            # 应该多出 cam_detect_4
+```
+
+### 第 3 步：A/B 实测
+
+```bash
+sudo systemctl stop wave-vision-llm          # 相机被主程序占着
+
+# ① 四路（现在就是默认）
+python tools/offline_debug.py --capture --tag 四路对比 --runs 3
+
+# ② 同一组图的三路对照（只看前 3 张，不用重拍）
+STAGE_TWO_DETECTION_COUNT=3 python tools/offline_debug.py --latest --runs 3
+```
+
+> `--latest` 只要求 `view_1..N` 存在；带 `STAGE_TWO_DETECTION_COUNT=3` 时它只加载前 3 张，
+> 所以两次跑的是**同一件物体、同一批图**，对比才有意义。
+
+**建议额外做一件事**：补一张侧向空场景 `llm/example/empty_side.jpg`。
+④ 看到的背景跟顶部/底部都不一样，没有这张它会把固定结构当物体。
+它是**可选**的：文件不存在就自动跳过，图号会按实际张数自己对齐（不用改 prompt 数字）。
+
+### 第 4 步：看什么
+
+- **质量**：④ 有没有让 `uncertain` 变少、薄壁/实心判得更稳（重点看以前靠猜的那几件）；
+- **成本**：+1 张 1024×576 大约 +645 tokens（+7%），请求耗时基本在噪声里，
+  `LLM_FALLBACK_TIMEOUT=15` 还有余量；
+- 如果一致性没明显提升，**就不要上**——多一路相机、多一条总线约束，维护成本不低。
+
+### 决定上 / 回滚
+
+**已经是这个状态**：机位默认 4，`deploy/70-wave-cameras.rules` 里 5 条别名都是生效的，
+`start_vision.sh` 的门禁会自动等 `cam_detect_4`。
+
+**退回三路**：`.env` 里加一行 `STAGE_TWO_DETECTION_COUNT=3`，重启服务即可。
+`cam_detect_4` 别名留着不碍事（`const.py` 只按机位数取前 N 个）。
+
+---
+
 ## 相机与设备别名（udev）
 
-四路相机全部走 `/dev/wave/cam_*`，别名由 `/etc/udev/rules.d/70-wave-cameras.rules` 按
+五路相机全部走 `/dev/wave/cam_*`，别名由 `/etc/udev/rules.d/70-wave-cameras.rules` 按
 **USB 物理口**绑定，代码里不再出现 `/dev/videoN`。
 
 规则源文件就在仓库里：`deploy/70-wave-cameras.rules`。
 
-| 别名 | 机位 | 物理口（`ID_PATH`） | 控制器 |
+| 别名 | 机位 | 物理口（`ID_PATH`） | 总线 |
 | --- | --- | --- | --- |
-| `cam_pallet` | 托盘上方广角（1280×960） | `platform-fc800000.usb-usb-0:1.2:1.0` | Bus01（fc800000） |
-| `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc800000.usb-usb-0:1.1:1.0` | Bus01（fc800000） |
-| `cam_detect_2` | 识别区② 斜上方（与①相对） | `platform-fc880000.usb-usb-0:1.3:1.0` | Bus04（fc880000） |
-| `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` | Bus04（fc880000） |
+| `cam_pallet` | 托盘上方广角（0bda:3035，1280×960） | `platform-xhci-hcd.10.auto-usb-0:1.2:1.0` | Bus05（xhci，USB3 口 Hub） |
+| `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc880000.usb-usb-0:1.3:1.0` | Bus03（fc880000） |
+| `cam_detect_2` | 识别区② 斜上方（与①相对，0bda:9143） | `platform-xhci-hcd.10.auto-usb-0:1.1:1.0` | Bus05（xhci，USB3 口 Hub） |
+| `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` | Bus03（fc880000） |
+| `cam_detect_4` | 识别区④ 水平侧视（补 ①② 死角） | `platform-fc800000.usb-usb-0:1.2:1.0` | Bus01（fc800000） |
 
 安装：
 
@@ -392,9 +474,16 @@ ls -l /dev/wave/
 - **必须加 `ATTR{index}=="0"`**：每台 UVC 相机同时暴露 `index0`（采集）与 `index1`（metadata），
   两者 `ID_PATH` 相同；不加判断别名会被后一个覆盖，指过去打不开。
 
-### 带宽：四路是 2+2 分的，别插回同一个 Hub
+### 带宽：每条 480M 总线最多 2 路
 
-四路相机分在**两条独立总线**上（`platform-fc800000.usb`、`platform-fc880000.usb`），
+现在是 **5 台相机（托盘 + 识别区 4 路）**，分在**三条独立总线**上（2+2+1）：
+
+```
+Bus03 fc880000   ①斜上 + ③正下                    2 路
+Bus05 xhci 480M  托盘 + ②斜上   [USB3 口 Hub]      2 路
+Bus01 fc800000   ④平视 + 嵌套 Hub(ZTE 网卡)        1 路
+```
+
 每条（480M）只放得下约 **2 路** MJPG 流。第 3 路 `STREAMON` 会直接失败，dmesg 报：
 
 ```text
@@ -406,7 +495,7 @@ uvcvideo 1-1.2.3:1.1: Failed to submit URB 0 (-28).
 
 ### 调试相机机位
 
-> **前提：主程序正在占着四路相机，必须先把服务停掉**，否则相机打不开。
+> **前提：主程序正在占着全部相机，必须先把服务停掉**，否则相机打不开。
 
 ```bash
 # 1) 让出相机
@@ -501,10 +590,11 @@ python main_push_llm.py
 | `DISPLAY_VIEW_INDEX` | 空（=0） | 显示屏「图片」列取哪个机位：`0`=①斜上（默认）、`1`=②斜上、`2`=③正下 |
 | `DETECT_CROP_MODE` | `square` | 识别区送图方式：`square`=居中方正 720→内缩 532（物体在边角会被切掉）；`full`=全幅缩放（见「送图尺寸与速度」） |
 | `DETECT_SEND_MAX_SIDE` | `1024` | `full` 模式的长边上限（只缩不放）：`768` 更快 / `1024` 均衡 / `1280` 原图直发 |
+| `STAGE_TWO_DETECTION_COUNT` | 空（=4） | 识别区机位数，默认 4；写 `3` 退回三路（见「识别区四路机位」），会同时改取帧路数/prompt/记忆视角数 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | `http://127.0.0.1:7890` | **必须写进 `.env`**：systemd 不读 `.bashrc` |
 | `NO_PROXY` | `localhost,127.0.0.1,…` | 别把代理自己排除掉 |
 | `CAMERA_PALLET_ID` | 空（=别名） | 覆盖托盘相机路径，默认 `/dev/wave/cam_pallet` |
-| `CAMERA_DETECT_1/2/3` | 空（=别名） | 覆盖识别区三路，默认 `/dev/wave/cam_detect_1/2/3` |
+| `CAMERA_DETECT_1/2/3/4` | 空（=别名） | 覆盖识别区四路，默认 `/dev/wave/cam_detect_1/2/3` |
 
 改完重启生效：`sudo systemctl restart wave-vision-llm`（**不需要** daemon-reload）。
 
@@ -525,7 +615,7 @@ python main_push_llm.py
 | `black_cube_top/bottom.jpg` | 实心对照（与黑色薄壁四棱柱刻意同色） |
 | … | 实心/薄壁、黑/彩色、竖放/横放均留对照 |
 
-**为什么成对给**：识别区是“同一个物体、一上一下两个视角”。同一件薄壁物体**通常只有一个视角能
+**为什么成对给**：识别区是“同一个物体、多个视角”（① ② 斜上 + ③ 正下 + ④ 平视）。同一件薄壁物体**通常只有一个视角能
 看到开口**（开口朝上 → ①② 看到内腔、③ 看到封闭端面；开口朝下则反过来）。封闭端面上那圈与外形
 平行的窄边是**壁厚/第一层打印面**，既不是空腔证据、也不是实心证据——所以每一对里都要有一张
 “封闭端面长什么样”，否则模型会把那圈线当成开口（这就是“实心被误判成薄壁”的主要来源）。
@@ -533,7 +623,7 @@ python main_push_llm.py
 **加/换例图的步骤**（先停主程序释放相机）：
 
 ```bash
-# 1) 用真实机位拍一组三张
+# 1) 用真实机位拍一组（张数 = 机位数）
 python tools/offline_debug.py --capture --dry-run      # 存 view_1..3.jpg
 # 2) 挑图改名放进 llm/example/，再在 llm/empty_examples.py 的 SHAPE_EXAMPLES 里登记
 # 3) 自检：文件名、词表、孤儿图、形状覆盖
@@ -566,7 +656,7 @@ python tools/set_empty_reference.py <未裁剪原图> --scene pallet
 识别区请求分两段 `user` 消息：
 
 1. 固定规则 + 词表 + 空识别区图 + 形状示例（段末打一次 `prompt_cache_breakpoint`）。
-2. 历史形状参考拼图 + 本轮任务文字 + 当前三视角（段末打一次）。
+2. 历史形状参考拼图 + 本轮任务文字 + 当前各机位视角（段末打一次）。
 
 顶层发 `prompt_cache_options={mode:explicit, ttl:30m}`。跑完会打印：
 
@@ -582,7 +672,7 @@ LLM 响应: id=… request_id=… service_tier=…
 | 场景 | 动作 |
 | --- | --- |
 | 托盘 `c` 查栏失败 | 调托盘颜色模型，按 5 栏几何 + 传感器方向回五行 `1/0` |
-| 识别区分类失败 | 复用本轮三张照片，累计颜色/形状/贴纸置信度后输出编号 |
+| 识别区分类失败 | 复用本轮各机位照片，累计颜色/形状/贴纸置信度后输出编号 |
 
 当前 `YOLO_FALLBACK=0`，这条路径**不加载也不执行**；置 `1` 才启用（同时会多加载 4 个 RKNN 模型）。
 
@@ -619,7 +709,7 @@ journalctl -u wave-vision-llm -b --no-pager | tail -30
 
 `ExecStart` 走 `deploy/start_vision.sh`，它按顺序做**四道门禁**，全过才启动主程序：
 
-1. 等四路相机别名 `/dev/wave/cam_pallet` + `cam_detect_1/2/3`（最长 60s）
+1. 等五个相机别名 `/dev/wave/cam_pallet` + `cam_detect_1..4`（最长 60s）
 2. 等板内代理端口 7890（最长 30s）
 3. **网络就绪**：`curl` 走代理带 key 真打 `$BASE_URL/models`，拿到 200 才算通（最长 300s，单调时钟计时）
 4. 等 X 会话 `:0` 可用（最长 60s）
@@ -792,7 +882,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 | 脚本 | 用途 |
 | --- | --- |
-| `offline_debug.py` | **离线调参主力**：三路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
+| `offline_debug.py` | **离线调参主力**：四路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
 | `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
 | `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框 |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |
@@ -835,7 +925,8 @@ python tools/check_examples.py                      # 示例图自检
   词表里另外 12 类（球、圆锥、圆柱、半球、三棱柱…）还没有示例。实际赛题里出现的形状优先补。
 - **缺“开口朝下”的例子**：三组薄壁件的开口都朝上（①② 能看到内腔，③ 看到封闭底面）。
   如果能补一张“薄壁件倒过来放”的 ③ 视角，模型就能学到“内腔也可以出现在底部视角”。
-- **例图目前是临时俯拍/仰拍**，建议用 ①②③ 三台真机位各拍一张，取景与线上完全一致。
+- **例图目前是临时俯拍/仰拍**，建议用 ①②③④ 四台真机位各拍一张，取景与线上完全一致。
+- **④ 平视还没有例图和空场景**：`llm/example/` 里没有平视示例；`empty_side.jpg` 也可以补一张（可选，缺了只是少一张背景参考）。
 - **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
 - `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
 - `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。

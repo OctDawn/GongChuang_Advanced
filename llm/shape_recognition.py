@@ -106,9 +106,11 @@ class ShapeRecognizer:
             # 送模型的识别区图统一施加 DETECT_LLM_INSET；手工准备的形状示例图不裁。
             views = [crop_detect_llm(frame) for frame in frames]
             prefix_sections = [
-                (build_classify_prefix(self.shape_examples),
+                (build_classify_prefix(self.shape_examples, empty_count=len(self.empty_crops)),
                  self.empty_crops + [example["image"] for example in self.shape_examples]),
-                (build_classify_prompt(records, self.shape_examples), self.memory.reference_images()),
+                (build_classify_prompt(records, self.shape_examples,
+                                       empty_count=len(self.empty_crops)),
+                 self.memory.reference_images()),
             ]
 
             # 一次携带全部参考图；只有 API 包装层处理格式/网络异常重试。

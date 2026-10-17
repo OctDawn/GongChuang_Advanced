@@ -77,12 +77,13 @@ def build_payload(view_paths):
     examples = load_shape_examples()
     stats = []
     prefix_contents = [
-        ([{"type": "text", "text": build_classify_prefix(examples)}]
+        ([{"type": "text", "text": build_classify_prefix(examples, empty_count=len(empty["detect_area"]))}]
          + [_encode_image(crop_detect_llm(image), stats, LLM_REF_MAX_SIDE or None)
             for image in empty["detect_area"]]
          + [_encode_image(example["image"], stats, LLM_REF_MAX_SIDE or None) for example in examples]),
         # 本次是全新记忆，没有历史参考图，与线上第一件货的情形一致
-        ([{"type": "text", "text": build_classify_prompt([], examples)}]),
+        ([{"type": "text",
+           "text": build_classify_prompt([], examples, empty_count=len(empty["detect_area"]))}]),
     ]
     image_contents = [_encode_image(crop_detect_llm(detect_frame_preprocessed(frame)), stats)
                       for frame in frames]

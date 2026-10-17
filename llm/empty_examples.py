@@ -19,12 +19,16 @@ from llm.qw import LLMError
 
 EMPTY_EXAMPLE_DIR = Path(__file__).resolve().parent / "example"
 
-# 空场景参考图：识别区三路机位看到的背景不同，必须分别给。
+# 空场景参考图：识别区每路机位看到的背景不同，要分别给。
 #   ①② 斜上方 → 顶部场景；③ 正下方 → 底部场景（背光、支架、亮边都不同）
-# 少了哪一张，模型就会把那一路的固定结构当成新物体或贴纸。
+#   ④ 水平侧视 → 侧向场景（可选：文件不存在就跳过，图号会自动对齐）
+# 少了必需的那张，模型就会把那一路的固定结构当成新物体或贴纸。
+# 每项：(文件名, 是否必需)
 EMPTY_SCENES = {
-    "pallet": ("pallet_empty.jpg",),
-    "detect_area": ("empty_top.jpg", "empty_bottom.jpg"),
+    "pallet": (("pallet_empty.jpg", True),),
+    "detect_area": (("empty_top.jpg", True),
+                    ("empty_bottom.jpg", True),
+                    ("empty_side.jpg", False)),
 }
 
 _TOP = "斜上①②"
@@ -99,11 +103,13 @@ def load_empty_examples(directory=EMPTY_EXAMPLE_DIR):
     - 识别区：crop_to_square（720x720），额外的 DETECT_LLM_INSET 在发送时统一施加。
     """
     images = {}
-    for scene, filenames in EMPTY_SCENES.items():
+    for scene, entries in EMPTY_SCENES.items():
         loaded = []
-        for filename in filenames:
+        for filename, required in entries:
             path = Path(directory) / filename
             if not path.is_file():
+                if not required:
+                    continue          # 可选（如 empty_side）：没有就少一张，编号自动对齐
                 raise LLMError(f"缺少空场景参考照片: {path}；请放入对应摄像头拍摄的未裁剪空场景原图")
             image = cv2.imread(str(path))
             if image is None or image.size == 0:
@@ -112,6 +118,8 @@ def load_empty_examples(directory=EMPTY_EXAMPLE_DIR):
             if cropped.size == 0:
                 raise LLMError(f"空场景参考照片裁剪后为空: {path}")
             loaded.append(cropped)
+        if not loaded:
+            raise LLMError(f"场景 {scene} 没有可用的空场景参考照片")
         # 托盘只有一路相机，保持单张（调用方按单张用）；识别区返回列表。
         images[scene] = loaded[0] if scene == "pallet" else loaded
     return images

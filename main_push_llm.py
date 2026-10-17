@@ -1,7 +1,7 @@
 """主程序（LLM 版）：多线程串口循环 + Qwen-VL 识别。
 
 串口协议、阶段编排、显示沿用早期 YOLO 版的框架。
-查栏和三路固定机位分类优先 Qwen-VL；单轮超过 LLM_FALLBACK_TIMEOUT（线上 .env=15s）
+查栏和四路固定机位分类优先 Qwen-VL；单轮超过 LLM_FALLBACK_TIMEOUT（线上 .env=15s）
 或失败时回 0（YOLO_FALLBACK=0），本件不分拣。
 
 贴纸已开放化：图案类用 LLM 开放描述；码/文字类用 label 模型定位贴纸框
@@ -9,13 +9,13 @@
 
 协议（电控 -> 视觉）：
     a  开始下一轮（直接进入阶段 2）
-    b  （已废弃）机械改造前的「转向完成」：识别区改三路固定机位后不再需要，
+    b  （已废弃）机械改造前的「转向完成」：识别区改四路固定机位后不再需要，
        收到只记 debug 日志、不置位任何事件
     c  检查托盘各栏
     v  电控操作完成，请求视觉显示
 
 视觉 -> 电控：
-    （已删除）r  要求转向：识别区不再旋转，三路机位一次拍齐
+    （已删除）r  要求转向：识别区不再旋转，四路机位一次拍齐
     0 / 1~6  分类结果（0=无物体/失败/类别已满）
     1/0 ×5   查栏结果，每栏后带换行（如 "1\\n0\\n1\\n1\\n0\\n"）
     f        显示完成回执
@@ -92,7 +92,7 @@ def save_images_worker(image_queue, stop_event, image_dir):
 class PushController:
     """托盘推送主控制流程（LLM 版）。
 
-    与早期 YOLO 版 PushController 的职责一致：阶段 1 查栏、阶段 2 三路固定机位识别、
+    与早期 YOLO 版 PushController 的职责一致：阶段 1 查栏、阶段 2 四路固定机位识别、
     阶段 3 显示回执，共享状态统一收在实例里。
     """
 
@@ -107,7 +107,7 @@ class PushController:
         self.pallet_frame_queue = pallet_frame_queue
         self.detect_area_frame_queues = tuple(detect_area_frame_queues)
         self.send_queue = send_queue
-        # 识别区改三路固定机位后不再等 b 握手，原 stage_two_requested 队列已整体移除
+        # 识别区改四路固定机位后不再等 b 握手，原 stage_two_requested 队列已整体移除
         self.display_row_queue = display_row_queue
         self.start_requested = start_requested
         self.column_check_requested = column_check_requested
@@ -160,7 +160,7 @@ class PushController:
                 os.path.join(self.video_dir, f"{self.run_name}_large_pallet.mp4"),
                 cv2.VideoWriter_fourcc(*"mp4v"), self.pallet_fps, (w, h),
             )
-        # 只录识别区①（三路 720p 同时写 mp4 会明显抢 IO；要全录就再各建一个 writer）
+        # 只录识别区①（四路 720p 同时写 mp4 会明显抢 IO；要全录就再各建一个 writer）
         if self.detect_area_video_writer is None:
             h, w = detect_frame.shape[:2]
             self.detect_area_video_writer = cv2.VideoWriter(
@@ -267,12 +267,12 @@ class PushController:
                 break
         return get_frame_retry(frame_queue, self.stop_event, name)
 
-    # ---- 阶段 2：三路固定机位一次拍齐 + 单轮历史参考比对 ----
+    # ---- 阶段 2：四路固定机位一次拍齐 + 单轮历史参考比对 ----
     def run_stage_two(self):
         self.stage2_round += 1
         frames = []
 
-        # 机械改造：识别区不再旋转，a 一到就从三路各自取「最新一帧」（误差约 1 帧 ≈ 33ms）
+        # 机械改造：识别区不再旋转，a 一到就从四路各自取「最新一帧」（误差约 1 帧 ≈ 33ms）
         if len(self.detect_area_frame_queues) != STAGE_TWO_DETECTION_COUNT:
             logger.warning("识别区机位数(%d)与 STAGE_TWO_DETECTION_COUNT(%d) 不一致",
                            len(self.detect_area_frame_queues), STAGE_TWO_DETECTION_COUNT)
@@ -467,7 +467,7 @@ def _run(empty_examples, shape_examples, fallback):
 
     large_pallet_frame_queue = queue.Queue(maxsize=1)
     large_pallet_fps_queue = queue.Queue(maxsize=1)
-    # 识别区三路固定机位：每路一个「最新帧」队列（各由一个采集线程持续刷新）
+    # 识别区四路固定机位：每路一个「最新帧」队列（各由一个采集线程持续刷新）
     detect_frame_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
     detect_fps_queues = [queue.Queue(maxsize=1) for _ in DETECT_CAMERA_IDS]
     send_queue = queue.Queue()

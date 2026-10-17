@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""四路相机冒烟测试：先"同时打开"四路，再"并行连读"若干帧，最后各存一张图。
+"""相机冒烟测试：先“同时打开”全部机位，再“并行连读”若干帧，最后各存一张图。
 
-为什么这样设计：四路相机挂在同一个 USB Hub 上，真正要验证的是
-「带宽/供电够不够四路同时跑」——所以不是一路一路开，而是四路一起开、轮流读，
-最后打印每路的实际帧率（掉到 30 以下就是总线被压住了）。
+为什么这样设计：真正要验证的是「总线带宽/供电够不够所有机位同时跑」
+——所以不是一路一路开，而是全部一起开、轮流读，看哪一路抢不到带宽。
+**铁律：每条 480M USB 总线最多 2 路 MJPG**，第 3 路会 `STREAMON` 失败（dmesg `URB 0 (-28)`）。
 
 用法（项目根目录、conda 环境 llm）：
-    python tools/probe_cameras.py                       # 走 shared/const.py 里的别名
+    python tools/probe_cameras.py                       # 走 shared/const.py 里的别名，共 1+STAGE_TWO_DETECTION_COUNT 路
     python tools/probe_cameras.py --devices /dev/video2 /dev/video0 /dev/video4 /dev/video6
-                                                        # 顺序固定：托盘 / 斜上① / 斜上② / 正下③
+                                                        # 数量 = 托盘 + 识别区机位数，顺序同取帧顺序
     python tools/probe_cameras.py --rounds 120 --wait 3
+    STAGE_TWO_DETECTION_COUNT=4 python tools/probe_cameras.py   # 试验第 4 路（共 5 路）
 
 输出：默认 tools/probe_out/<MMDD_HHMMSS>/，文件名前缀就是位置：
-    0_pallet.jpg  1_detect_up1.jpg  2_detect_up2.jpg  3_detect_down.jpg
-退出码：0 = 四路全部达标，1 = 有失败。
+    0_pallet.jpg  1_detect_1.jpg  2_detect_2.jpg  ...（机位数自动跟随）
+退出码：0 = 全部达标，1 = 有失败。
 """
 import argparse
 import os
@@ -28,7 +29,7 @@ if ROOT not in sys.path:
 
 from shared.const import (  # noqa: E402  —— 必须在加完 sys.path 之后导入
     CAMERA_PALLET_ID,
-    DETECT_CAMERA_IDS,
+    DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES, STAGE_TWO_DETECTION_COUNT,
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
 )
@@ -52,10 +53,12 @@ def open_camera(camera_id, name, width, height, fps):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="四路相机冒烟测试（同时打开 + 并行连读）")
-    parser.add_argument("--devices", nargs=4, default=None,
-                        metavar=("PALLET", "UP1", "UP2", "DOWN"),
-                        help="直接指定四个设备节点，顺序：托盘 斜上① 斜上② 正下③")
+    view_count = STAGE_TWO_DETECTION_COUNT
+    total = 1 + view_count
+    parser = argparse.ArgumentParser(
+        description=f"相机冒烟测试（{total} 路同时开 + 并行连读 + 各存一张 jpg）")
+    parser.add_argument("--devices", nargs=total, default=None, metavar="DEV",
+                        help=f"直接指定 {total} 个设备节点（托盘 + {view_count} 路识别区，按取帧顺序）")
     parser.add_argument("--out", default=None, help="输出目录（默认 tools/probe_out/<时间戳>）")
     parser.add_argument("--rounds", type=int, default=90, help="并行连读轮数（默认 90，约 3 秒）")
     parser.add_argument("--wait", type=float, default=2.0, help="每路预热秒数（默认 2）")
@@ -66,15 +69,13 @@ def main():
     print(f"输出目录: {out_dir}\n")
 
     ids = tuple(args.devices) if args.devices else (CAMERA_PALLET_ID,) + tuple(DETECT_CAMERA_IDS)
-    targets = [
-        ("0_pallet",      ids[0], PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS),
-        ("1_detect_up1",  ids[1], DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-        ("2_detect_up2",  ids[2], DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-        ("3_detect_down", ids[3], DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-    ]
+    targets = [("0_pallet", ids[0], PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS)]
+    for index, device in enumerate(ids[1:], start=1):
+        targets.append((f"{index}_detect_{index}", device,
+                        DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS))
 
-    # ---- ① 同时打开四路 ----
-    print("① 同时打开四路 …")
+    # ---- ① 同时打开全部 ----
+    print(f"① 同时打开 {len(targets)} 路 …")
     opened = []
     for name, camera_id, width, height, fps in targets:
         cap = open_camera(camera_id, name, width, height, fps)
@@ -94,7 +95,7 @@ def main():
         time.sleep(0.05)
 
     # ---- ③ 四路并行连读，统计每路真实帧率 ----
-    print(f"③ 四路并行连读 {args.rounds} 轮（这一轮才真正压带宽/供电）…")
+    print(f"③ {len(opened)} 路并行连读 {args.rounds} 轮（这一轮才真正压带宽/供电）…")
     stats = {name: [0, 0] for name, _camera_id, _cap in opened}   # [成功, 失败]
     frames = {}
     start = time.time()
@@ -124,9 +125,10 @@ def main():
             cv2.imwrite(os.path.join(out_dir, f"{name}.jpg"), frames[name])
         cap.release()
 
-    print(f"\n四路并行总耗时 {elapsed:.2f}s（{args.rounds} 轮）；达标 {ok_count}/{len(opened)} 路")
+    print(f"\n{len(opened)} 路并行总耗时 {elapsed:.2f}s（{args.rounds} 轮）；达标 {ok_count}/{len(opened)} 路")
     print(f"看图确认：{out_dir}")
-    print("  0_pallet=托盘全景  1_detect_up1=斜上①  2_detect_up2=斜上②(与①相对)  3_detect_down=正下方仰视底面")
+    print("  " + "  ".join(f"{index}_detect_{index}={name}"
+                           for index, name in enumerate(DETECT_CAMERA_NAMES, start=1)))
     return 0 if ok_count == len(targets) else 1
 
 

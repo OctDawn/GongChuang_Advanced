@@ -19,25 +19,38 @@ DETECT_AREA_LABEL_MODEL_PATH = "models/label_detect_area.rknn"
 
 # ================= 摄像头信息（两个后端共用） =================
 CAMERA_PALLET_ID = os.environ.get("CAMERA_PALLET_ID", "/dev/wave/cam_pallet")   #大托盘上方广角摄像头
-# 识别区：三个固定机位（机械改造后不再旋转）
+# 识别区：固定机位（机械改造后不再旋转）
 #   ① ② 水平相对、各自向下倾斜约 45° 俯视（互补看到两侧竖直面）
 #   ③ 正下方仰视，看底面（薄壁开口 / 底部贴纸）
+#   ④ 水平侧视：补 ①② 的死角（俯视会把竖直面压扁），正对竖直侧面
 #
-# 四路相机一律走 /dev/wave/cam_* 别名，别名由 /etc/udev/rules.d/70-wave-cameras.rules
+# 五路相机（托盘 1 + 识别区 4）一律走 /dev/wave/cam_* 别名，别名由 /etc/udev/rules.d/70-wave-cameras.rules
 # 按 **USB 物理口**（ENV{ID_PATH}）绑定。不用 by-id：两台 0bda:9143 假序列号都是
 # 200901010001，by-id 名字直接撞车。换 USB 口只改 udev 规则，代码一行不动。
 # 规则源文件在仓库里：deploy/70-wave-cameras.rules（README「相机与设备别名」同）。
-# 当前绑定（改线后这三处必须一起更新）：
-#   platform-fc800000.usb-usb-0:1.2:1.0 → cam_pallet   （托盘广角）
-#   platform-fc800000.usb-usb-0:1.1:1.0 → cam_detect_1 （斜上①）
-#   platform-fc880000.usb-usb-0:1.3:1.0 → cam_detect_2 （斜上②，icspring）
-#   platform-fc880000.usb-usb-0:1.4:1.0 → cam_detect_3 （正下③）
-DETECT_CAMERA_IDS = (
-    os.environ.get("CAMERA_DETECT_1", "/dev/wave/cam_detect_1"),
-    os.environ.get("CAMERA_DETECT_2", "/dev/wave/cam_detect_2"),
-    os.environ.get("CAMERA_DETECT_3", "/dev/wave/cam_detect_3"),
+# 当前绑定（改线后这三处必须一起更新；5 台相机 2+2+1 分散在 3 条 480M 总线上）：
+#   platform-xhci-hcd.10.auto-usb-0:1.2:1.0 → cam_pallet   （托盘广角 0bda:3035）
+#   platform-fc880000.usb-usb-0:1.3:1.0      → cam_detect_1 （斜上①）
+#   platform-xhci-hcd.10.auto-usb-0:1.1:1.0 → cam_detect_2 （斜上②，0bda:9143/RYS）
+#   platform-fc880000.usb-usb-0:1.4:1.0      → cam_detect_3 （正下③）
+#   platform-fc800000.usb-usb-0:1.2:1.0      → cam_detect_4 （水平侧视④）
+
+# 识别区机位数：默认 4（①②斜上相对 + ③正下仰视 + ④水平侧视）。
+# 想退回 3 路：STAGE_TWO_DETECTION_COUNT=3（④ 的别名和说明会自动忽略）
+# 它会同时改变：取帧路数、形状记忆的视角数、prompt 的机位说明、YOLO fallback 的期望张数。
+STAGE_TWO_DETECTION_COUNT = int(os.environ.get("STAGE_TWO_DETECTION_COUNT", "4"))
+
+_ALL_DETECT_NAMES = (
+    "识别区①斜上方",
+    "识别区②斜上方(相对)",
+    "识别区③正下方仰视",
+    "识别区④水平侧视",
 )
-DETECT_CAMERA_NAMES = ("识别区①斜上方", "识别区②斜上方(相对)", "识别区③正下方仰视")
+DETECT_CAMERA_IDS = tuple(
+    os.environ.get(f"CAMERA_DETECT_{index}", f"/dev/wave/cam_detect_{index}")
+    for index in range(1, STAGE_TWO_DETECTION_COUNT + 1)
+)
+DETECT_CAMERA_NAMES = _ALL_DETECT_NAMES[:STAGE_TWO_DETECTION_COUNT]
 CAMERA_DETECT_AREA_ID = DETECT_CAMERA_IDS[0]   # 兼容旧引用（= 识别区①）
 PALLET_WIDTH = 1280
 PALLET_HEIGHT = 960
@@ -91,7 +104,6 @@ STABLE_TIMES = 5
 CONTAIN_THRESHOLD = 0.8
 MAX_TEMP_CATEGORIES = 6
 MAX_ITEMS_PER_CATEGORY = 16  # 每盒最多 16 件（同一类别可放的上限；当前只有 main_push_llm.py 在用）
-STAGE_TWO_DETECTION_COUNT = 3  # 阶段2 识别区机位数：机械改造后为 3 个固定机位（①②斜上相对 + ③正下方仰视），不再旋转
 
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
@@ -127,7 +139,7 @@ PUSH_MARGIN = 0.0
 #   注意：内缩过多会把最左/最右栏的边缘切掉，影响查栏；先小后大，用 test_llm.py 验证。
 PALLET_LLM_INSET = {"left": 0.01, "top": 0.01, "right": 0.03, "bottom": 0.03}
 
-# 阶段2（识别区三路固定机位 ① ② ③）：在摄像头已裁成的正方形（1280x720 -> 720x720）基础上再内缩。
+# 阶段2（识别区四路固定机位 ① ② ③ ④）：在摄像头已裁成的正方形（1280x720 -> 720x720）基础上再内缩。
 #   右、上各 1/6 后约 600x600；左、下暂不裁。
 DETECT_LLM_INSET = {"left": 0.13 , "top": 0.13, "right": 0.13, "bottom": 0.13}
 

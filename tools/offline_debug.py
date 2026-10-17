@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""识别区离线调试：三路拍照 → 现在这套 prompt → 大模型 → 记录结果/耗时/用量。
+"""识别区离线调试：各路拍照 → 现在这套 prompt → 大模型 → 记录结果/耗时/用量。
 
 **不依赖机械、电控、串口、显示屏**。只复用线上同一套模块
 （llm.qw / llm.prompt / llm.shape_recognition / llm.shape_memory / llm.empty_examples），
@@ -8,7 +8,7 @@
 
 典型用法（板子上，项目根目录，conda 环境 llm）：
 
-    # 一步到底：拍三路 + 跑 1 次
+    # 一步到底：各路各拍一张 + 跑 1 次
     python tools/offline_debug.py --capture
 
     # 拍一组并跑 3 次（看稳定性和耗时分布）
@@ -17,7 +17,7 @@
     # 用最近一次采集的图反复跑，不用再开相机
     python tools/offline_debug.py --latest --runs 5
 
-    # 用自己准备的三张图（顺序必须：①斜上 ②斜上 ③正下仰视）
+    # 用自己准备的一组图（顺序必须：①斜上 ②斜上 ③正下仰视 ④水平侧视）
     python tools/offline_debug.py --images a.jpg b.jpg c.jpg
 
     # 只走流程不发请求：检查裁剪/尺寸/文件名对不对
@@ -25,6 +25,10 @@
 
     # 看历史采集
     python tools/offline_debug.py --list
+
+    # 试验第 4 路（④ 水平侧视）：同一个工具，环境变量切，图片张数自动跟着变
+    STAGE_TWO_DETECTION_COUNT=4 python tools/offline_debug.py --capture --tag 四路对比 --runs 3
+    # 回滚：不带这个变量就是原来的 3 路（生产代码一行没变）
 
 输出在 capture/offline/<时间戳>[_tag]/ ：
 
@@ -176,7 +180,7 @@ def extract_json(text):
 
 # ===================== 采集 =====================
 def capture_views(devices, session_dir, warmup, drop_frames):
-    """三路各取一张（MJPG + 单帧缓冲），保存 view_1..3.jpg。"""
+    """各路各取一张（MJPG + 单帧缓冲），保存 view_1..N.jpg。"""
     if len(devices) != STAGE_TWO_DETECTION_COUNT:
         raise SystemExit(f"需要 {STAGE_TWO_DETECTION_COUNT} 个设备，实际给了 {len(devices)} 个")
 
@@ -394,18 +398,18 @@ def print_summary(records):
 # ===================== 主流程 =====================
 def main():
     parser = argparse.ArgumentParser(
-        description="识别区离线调试：三路拍照 → 现有 prompt → 大模型 → 记录结果/耗时/用量")
-    parser.add_argument("--capture", action="store_true", help="先采集一组三路照片")
+        description="识别区离线调试：各路拍照 → 现有 prompt → 大模型 → 记录结果/耗时/用量")
+    parser.add_argument("--capture", action="store_true", help="先采集一组（各路各一张）")
     parser.add_argument("--latest", action="store_true", help="用最近一次采集的那组")
     parser.add_argument("--images", nargs=STAGE_TWO_DETECTION_COUNT, metavar="IMG",
-                        help="直接用三张图（顺序：①斜上 ②斜上 ③正下仰视）")
+                        help="直接用 N 张图（N=STAGE_TWO_DETECTION_COUNT；顺序：①斜上 ②斜上 ③正下 [④侧视]）")
     parser.add_argument("--tag", default="", help="给这次采集起个名字，便于以后 --list 里认")
     parser.add_argument("--runs", type=int, default=1, help="重复识别次数（默认 1）")
     parser.add_argument("--timeout", type=float, default=None,
                         help="单轮总时限（默认读 .env 的 LLM_FALLBACK_TIMEOUT，再退到 15）")
     parser.add_argument("--out", default=OUT_ROOT, help="输出根目录（默认 capture/offline）")
     parser.add_argument("--devices", nargs=STAGE_TWO_DETECTION_COUNT, metavar="DEV",
-                        help="覆盖三路设备路径（默认 const 里的 /dev/wave/cam_detect_1~3）")
+                        help="覆盖各路设备路径（默认 const 里的 /dev/wave/cam_detect_1..N）")
     parser.add_argument("--warmup", type=float, default=1.5, help="采集预热秒数（默认 1.5）")
     parser.add_argument("--drop", type=int, default=20, help="预热后再丢弃的帧数（默认 20）")
     parser.add_argument("--keep-memory", action="store_true",

@@ -3,7 +3,7 @@
 #
 # 为什么需要它：冷启动时 USB 摄像头往往还没枚举完，主程序按 /dev/wave 别名
 # 打开会直接失败退出（日志形态：VIDEOIO(V4L2) ... can't be used to capture by name）。
-# 本脚本先等四路相机别名与板内代理端口就绪，再把主程序交给 systemd 监督。
+# 本脚本先等五路相机别名（托盘 + 识别区各路）与板内代理端口就绪，再把主程序交给 systemd 监督。
 #
 # 退出码：主程序的退出码原样透传；systemd 端 Restart=always 会继续重启。
 set -u
@@ -19,13 +19,13 @@ WAIT_PROXY="${WAIT_PROXY:-30}"  # 等板内代理端口最长秒数
 
 # 相机一律走 /etc/udev/rules.d/70-wave-cameras.rules 建的物理口别名。
 # 不用 by-id：两台 0bda:9143 假序列号相同，by-id 名字会撞车。
-# 顺序就是 main_push_llm 取帧的顺序（① ② 斜上相对、③ 正下方仰视）。
-CAM_ALIASES=(
-    "/dev/wave/cam_pallet"     # 托盘上方广角
-    "/dev/wave/cam_detect_1"   # 识别区① 斜上
-    "/dev/wave/cam_detect_2"   # 识别区② 斜上（相对）
-    "/dev/wave/cam_detect_3"   # 识别区③ 正下方仰视
-)
+# 识别区机位数跟随 .env 的 STAGE_TWO_DETECTION_COUNT（默认 4）。
+DETECT_COUNT="${STAGE_TWO_DETECTION_COUNT:-$(sed -n 's/^STAGE_TWO_DETECTION_COUNT=//p' .env 2>/dev/null | head -1)}"
+DETECT_COUNT="${DETECT_COUNT:-4}"
+CAM_ALIASES=("/dev/wave/cam_pallet")   # 托盘上方广角
+for index in $(seq 1 "$DETECT_COUNT"); do
+    CAM_ALIASES+=("/dev/wave/cam_detect_$index")
+done
 
 log() { printf '[start_vision %s] %s\n' "$(date +%H:%M:%S)" "$1"; }
 
@@ -45,7 +45,7 @@ wait_for() {  # wait_for <描述> <秒数> <命令...>
     return 1
 }
 
-all_cams_ready() {  # 四路别名都存在
+all_cams_ready() {  # pallet + 识别区各路别名都存在
     local camera
     for camera in "${CAM_ALIASES[@]}"; do
         [ -e "$camera" ] || return 1
@@ -54,7 +54,7 @@ all_cams_ready() {  # 四路别名都存在
 }
 
 log "项目目录: $ROOT"
-wait_for "四路相机别名 (pallet + detect_1/2/3)" "$WAIT_DEV" all_cams_ready
+wait_for "相机别名 pallet + detect_1..${DETECT_COUNT}" "$WAIT_DEV" all_cams_ready
 wait_for "板内代理 127.0.0.1:7890" "$WAIT_PROXY" \
     bash -c "ss -lnt 2>/dev/null | grep -q 127.0.0.1:7890"
 
