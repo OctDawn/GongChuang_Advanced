@@ -66,6 +66,15 @@ def parse_classify_result(result, records=()):
                 description=description.strip())
 
 
+def _crop_empty_examples(empty_example):
+    """空场景参考图 → 收模型尺寸的列表（识别区顶部/底部各一张）。"""
+    if empty_example is None:
+        return []
+    if isinstance(empty_example, (list, tuple)):
+        return [crop_detect_llm(image) for image in empty_example]
+    return [crop_detect_llm(empty_example)]
+
+
 class ShapeRecognizer:
     def __init__(self, memory, empty_example, request=None, shape_examples=()):
         self.memory = memory
@@ -73,7 +82,8 @@ class ShapeRecognizer:
         self.shape_examples = list(shape_examples)
         self.request = request or qwen_realise
         # 空场景参考图只裁一次：它每轮都一样，固定下来才能命中编码缓存。
-        self.empty_crop = crop_detect_llm(empty_example) if empty_example is not None else None
+        # 识别区有顶部/底部两个背景（①② vs ③），所以统一按列表处理。
+        self.empty_crops = _crop_empty_examples(empty_example)
 
     def _resolve_shape(self, result, views):
         """两种识别入口共用状态处理与形状登记；None 表示明确空场景。"""
@@ -97,7 +107,7 @@ class ShapeRecognizer:
             views = [crop_detect_llm(frame) for frame in frames]
             prefix_sections = [
                 (build_classify_prefix(self.shape_examples),
-                 [self.empty_crop] + [example["image"] for example in self.shape_examples]),
+                 self.empty_crops + [example["image"] for example in self.shape_examples]),
                 (build_classify_prompt(records, self.shape_examples), self.memory.reference_images()),
             ]
 

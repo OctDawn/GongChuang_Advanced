@@ -43,7 +43,7 @@ from llm.qw import (  # noqa: E402
     DASHSCOPE_MODEL, LLM_REF_MAX_SIDE, _encode_image, _get_client, _build_messages,
     _build_responses_input,
 )
-from shared.common import crop_detect_llm  # noqa: E402
+from shared.common import crop_detect_llm, detect_frame_preprocessed  # noqa: E402
 
 VARIANTS = {
     "responses_default": ("responses", None),
@@ -78,12 +78,14 @@ def build_payload(view_paths):
     stats = []
     prefix_contents = [
         ([{"type": "text", "text": build_classify_prefix(examples)}]
-         + [_encode_image(crop_detect_llm(empty["detect_area"]), stats, LLM_REF_MAX_SIDE or None)]
+         + [_encode_image(crop_detect_llm(image), stats, LLM_REF_MAX_SIDE or None)
+            for image in empty["detect_area"]]
          + [_encode_image(example["image"], stats, LLM_REF_MAX_SIDE or None) for example in examples]),
         # 本次是全新记忆，没有历史参考图，与线上第一件货的情形一致
         ([{"type": "text", "text": build_classify_prompt([], examples)}]),
     ]
-    image_contents = [_encode_image(crop_detect_llm(frame), stats) for frame in frames]
+    image_contents = [_encode_image(crop_detect_llm(detect_frame_preprocessed(frame)), stats)
+                      for frame in frames]
     total_kb = sum(kb for _, _, kb in stats)
     print(f"载荷：{len(stats)} 张，共 {total_kb:.0f} KB"
           f"（LLM_REF_MAX_SIDE={LLM_REF_MAX_SIDE or '不限'}）")

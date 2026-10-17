@@ -4,15 +4,10 @@
 
 用法（在板子上跑，项目根目录）：
 
-    # 1) 先干跑，看会裁成什么样、有没有二次裁剪风险（不写文件）
-    python tools/set_empty_reference.py \
-        capture/images/20260926_165525/original/stage2_r002_01.jpg \
-        --scene detect_area --dry-run
-
-    # 2) 确认没问题再真正替换（旧文件自动备份成 *_empty.bak.jpg）
-    python tools/set_empty_reference.py \
-        capture/images/20260926_165525/original/stage2_r002_01.jpg \
-        --scene detect_area
+    # 识别区有顶部/底部两个背景，要分别替换（①②斜上看到的是顶部，③正下看到的是底部）
+    # 推荐直接用 offline_debug 拍一组空场景，再从里面挑 view_1 / view_3。
+    python tools/set_empty_reference.py capture/offline/<会话>/view_1.jpg --scene empty_top --dry-run
+    python tools/set_empty_reference.py capture/offline/<会话>/view_3.jpg --scene empty_bottom
 
     # 托盘空场景同理
     python tools/set_empty_reference.py capture/images/xxx/pallet_original/stage1_r001.jpg --scene pallet
@@ -36,12 +31,14 @@ except ImportError as error:  # noqa: BLE001
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from shared.common import crop_detect_llm, crop_pallet_llm  # noqa: E402
+from shared.common import crop_detect_llm, crop_pallet_llm, crop_to_square  # noqa: E402
 
 EXAMPLE_DIR = ROOT / "llm" / "example"
 # 每种场景：参考图文件名、期望的原图最小边长（低于此值说明是裁过的图）
 SCENES = {
-    "detect_area": {"filename": "detect_area_empty.jpg", "min_side": 700},
+    # 识别区两个背景：①②斜上看顶部、③正下看底部，两张必须分别采
+    "empty_top": {"filename": "empty_top.jpg", "min_side": 1000},
+    "empty_bottom": {"filename": "empty_bottom.jpg", "min_side": 1000},
     "pallet": {"filename": "pallet_empty.jpg", "min_side": 1000},
 }
 
@@ -80,7 +77,6 @@ def main():
     if args.scene == "pallet":
         final = crop_pallet_llm(image)
     else:
-        from shared.common import crop_to_square
         final = crop_detect_llm(crop_to_square(image))
 
     print(f"源图      : {source}")
@@ -95,7 +91,7 @@ def main():
         print(f"      -> 会导致二次裁剪，取景和实时画面错位。请改用在 "
               f"capture/images/<会话>/original/ 或 pallet_original/ 下的未裁剪原图")
         problem = True
-    if args.scene == "detect_area" and abs(width - height) > 8 and width / max(height, 1) > 2:
+    if args.scene != "pallet" and width / max(height, 1) > 2:
         print(f"  [!] 源图不是正方/接近正方（{width}x{height}）；若这是未裁的 1280x720 原帧可忽略")
 
     target = Path(args.out_dir) / spec["filename"]

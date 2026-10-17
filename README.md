@@ -35,6 +35,11 @@
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
 **10/17 hrx**
+- 例图改 ASCII 命名，薄壁/实心成对
+- 识别区空场景拆顶部/底部两张
+- 补“只有一个视角能看到开口”判据
+
+**10/17 hrx**
 - 新增 DETECT_CROP_MODE：全幅/居中两种送图
 - 修离线脚本次裁裁剪不一致
 
@@ -190,7 +195,7 @@ GongChuang_Advanced/
 │   ├── shape_recognition.py     # 三机位识别、校验、形状登记
 │   ├── shape_memory.py          # 本次运行的形状参考图库（3 视角拼图）
 │   ├── empty_examples.py        # 空场景图与带标签示例加载
-│   └── example/                 # 2 张空场景 + 7 张形状示例
+│   └── example/                 # 3 张空场景（托盘/顶部/底部）+ 11 张形状示例（顶部/底部成对）
 ├── yolo/                        # 本地 NPU 层（LLM 版按需使用）
 │   ├── inference_utils.py       # DetectRunner 与后处理、类别数防呆
 │   ├── fallback.py              # YOLO 回落（YOLO_FALLBACK=0 时不加载）
@@ -503,6 +508,49 @@ python main_push_llm.py
 
 改完重启生效：`sudo systemctl restart wave-vision-llm`（**不需要** daemon-reload）。
 
+### 例图与空场景（`llm/example/`）
+
+**命名规范**（全 ASCII——Windows 下 `cv2.imread` 读不了中文路径）：
+
+```text
+<color>_<shape>[_<pose>]_<view>.jpg      view = top（①②斜上）/ bottom（③正下）
+```
+
+| 文件 | 说明 |
+| --- | --- |
+| `empty_top.jpg` | 识别区**顶部背景**（①② 机位看到的空场景） |
+| `empty_bottom.jpg` | 识别区**底部背景**（③ 机位，背光/支架/亮边都不同） |
+| `pallet_empty.jpg` | 托盘空场景（阶段 1 查栏用） |
+| `black_prism4_thinwalled_top/bottom.jpg` | 同一件薄壁件的两个视角 |
+| `black_cube_top/bottom.jpg` | 实心对照（与黑色薄壁四棱柱刻意同色） |
+| … | 实心/薄壁、黑/彩色、竖放/横放均留对照 |
+
+**为什么成对给**：识别区是“同一个物体、一上一下两个视角”。同一件薄壁物体**通常只有一个视角能
+看到开口**（开口朝上 → ①② 看到内腔、③ 看到封闭端面；开口朝下则反过来）。封闭端面上那圈与外形
+平行的窄边是**壁厚/第一层打印面**，既不是空腔证据、也不是实心证据——所以每一对里都要有一张
+“封闭端面长什么样”，否则模型会把那圈线当成开口（这就是“实心被误判成薄壁”的主要来源）。
+
+**加/换例图的步骤**（先停主程序释放相机）：
+
+```bash
+# 1) 用真实机位拍一组三张
+python tools/offline_debug.py --capture --dry-run      # 存 view_1..3.jpg
+# 2) 挑图改名放进 llm/example/，再在 llm/empty_examples.py 的 SHAPE_EXAMPLES 里登记
+# 3) 自检：文件名、词表、孤儿图、形状覆盖
+python tools/check_examples.py
+```
+
+**换空场景**（换了底板/背景必须换，否则模型会拿旧背景当基准）：
+
+```bash
+python tools/set_empty_reference.py <未裁剪原图> --scene empty_top     # ①② 顶部
+python tools/set_empty_reference.py <未裁剪原图> --scene empty_bottom  # ③ 底部
+python tools/set_empty_reference.py <未裁剪原图> --scene pallet
+```
+
+> 空场景图必须是**未裁剪的相机原图**；`--dry-run` 会检查尺寸，防止二次裁剪导致取景错位。
+> 识别区两张空场景缺一不可：少了哪一张，那一路的固定结构就会被当成新物体或贴纸。
+
 ### 图片链路
 
 ```text
@@ -783,9 +831,11 @@ python tools/check_examples.py                      # 示例图自检
 
 ## 待办 / 已知遗留
 
-- **空场景参考图只有 1 张**（`llm/example/detect_area_empty.jpg`），而识别区现在是三个机位。
-  prompt 里「第 1 张是识别区空场景参考照片」这套编号是单张设计的；结构装好后要采三个机位各一张，
-  再一起调整编号段（`tools/capture.py` 已能分别采三个机位）。
+- **例图覆盖不全**：现有 11 张只覆盖 `cube` / `prism4_thinWalled` / `prism5_thinWalled` / `prism6`，
+  词表里另外 12 类（球、圆锥、圆柱、半球、三棱柱…）还没有示例。实际赛题里出现的形状优先补。
+- **缺“开口朝下”的例子**：三组薄壁件的开口都朝上（①② 能看到内腔，③ 看到封闭底面）。
+  如果能补一张“薄壁件倒过来放”的 ③ 视角，模型就能学到“内腔也可以出现在底部视角”。
+- **例图目前是临时俯拍/仰拍**，建议用 ①②③ 三台真机位各拍一张，取景与线上完全一致。
 - **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
 - `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
 - `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。

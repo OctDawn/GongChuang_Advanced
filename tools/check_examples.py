@@ -7,11 +7,25 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 src = open("llm/empty_examples.py", encoding="utf-8").read()
 tree = ast.parse(src)
-examples = None
+
+# SHAPE_EXAMPLES 里可能引用模块级字符串常量（如 _TOP / _BOTTOM）：
+# 先把这些纯字符串常量收集成命名空间，再做一次受限求值（不导入项目代码）。
+namespace = {"__builtins__": {}}
+shape_node = None
 for node in tree.body:
-    if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "SHAPE_EXAMPLES":
-        examples = ast.literal_eval(node.value)
-assert examples is not None, "没找到 SHAPE_EXAMPLES"
+    if not isinstance(node, ast.Assign):
+        continue
+    names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+    if not names:
+        continue
+    if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+        for name in names:
+            namespace[name] = node.value.value
+    elif names == ["SHAPE_EXAMPLES"]:
+        shape_node = node.value
+
+assert shape_node is not None, "没找到 SHAPE_EXAMPLES"
+examples = eval(compile(ast.Expression(shape_node), "<SHAPE_EXAMPLES>", "eval"), namespace)
 
 const_src = open("shared/const.py", encoding="utf-8").read()
 vocab = ast.literal_eval(
@@ -29,7 +43,7 @@ for e in examples:
         bad.append(e["filename"])
 
 used = {e["filename"] for e in examples}
-skip = {"pallet_empty.jpg", "detect_area_empty.jpg"}
+skip = {"pallet_empty.jpg", "empty_top.jpg", "empty_bottom.jpg"}
 files = {f for f in os.listdir("llm/example") if f.lower().endswith(".jpg")}
 print()
 print("目录里有、但没有被引用的图 :", sorted(files - used - skip) or "无")
