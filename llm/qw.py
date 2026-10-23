@@ -111,6 +111,9 @@ LLM_CACHE_MODE = os.environ.get("LLM_CACHE_MODE", "openai_explicit").strip().low
 # 上游服务档位（OpenRouter 请求参数 service_tier）：flex / priority（fast 为其别名）/ ultrafast / auto。
 # 空 = 不传，用 OpenRouter 默认路由。ultrafast 会优先走 ultrafast 端点，失败回落 priority，再回落默认端点。
 LLM_SERVICE_TIER = os.environ.get("LLM_SERVICE_TIER", "").strip().lower()
+# 启动预热开关：1（默认）= 就绪后在后台发一次极小的请求，把「连接 + 参考图编码 +
+# 30 分钟显式前缀缓存」提前热起来，第一轮真实请求直接命中；0 = 关闭，首轮自己付代价。
+LLM_WARMUP = os.environ.get("LLM_WARMUP", "1").strip().lower() not in ("0", "false", "no", "off")
 
 # 排查用的传输层计时：LLM_DEBUG_TIMING=1 时打开 httpcore/httpx 的 DEBUG 日志。
 # 日志里的 send_request_body / receive_response_headers / response_closed 各自带时间戳，
@@ -577,3 +580,63 @@ def _qwen_realise(images, prompt, message_save_path=None, validator=None, deadli
 
     _check_deadline(deadline)
     raise LLMError(f"LLM 请求最终失败: {last_err}")
+
+
+WARMUP_PROMPT = "预热：只回复 OK，不要分析图片。"
+
+
+def warm_up(prefix_sections=(), prompt=WARMUP_PROMPT):
+    """启动预热（后台线程调用）：发一次极小的请求，结果丢弃。
+
+    一次请求同时办三件事：
+    1. 建连——DNS + TCP + TLS + 代理隧道，连接留在 keepalive 池里复用；
+    2. 参考图编码——前缀里的固定图走 _ENCODE_CACHE，正式请求直接命中；
+    3. 前缀缓存——显式缓存 ttl=30m，服务端提前把前缀写进缓存，第一轮真实请求
+       直接 cached 命中，省掉首次 3.7~9.3 秒的缓存重建。
+
+    前缀必须与正式请求字节一致才会命中，所以调用方要传**同一个构造函数**产出的
+    prefix_sections（见 ShapeRecognizer.classify_prefix_sections）。
+
+    任何异常都只记 warning 并返回 None：预热绝不能影响主流程，也不能占用
+    LLM_FALLBACK_TIMEOUT 的预算。返回耗时秒数，关闭/失败返回 None。
+    """
+    if not LLM_WARMUP:
+        logger.info("LLM 预热已关闭（LLM_WARMUP=0）")
+        return None
+    if not DASHSCOPE_API_KEY:
+        logger.warning("LLM 预热跳过：缺少环境变量 DASHSCOPE_API_KEY")
+        return None
+    started = time.time()
+    try:
+        ref_stats = []
+        prefix_contents = [
+            [{"type": "text", "text": text}]
+            + [_encode_image(img, ref_stats, LLM_REF_MAX_SIDE or None, cache=True) for img in refs]
+            for text, refs in prefix_sections
+        ]
+        # 不带本轮目标图：缓存断点在前缀末尾，尾部内容不参与命中比对。
+        messages = _build_messages(prefix_contents, [], prompt)
+        extra_body = {}
+        if LLM_CACHE_MODE == "openai_explicit":
+            extra_body["prompt_cache_options"] = {"mode": "explicit", "ttl": "30m"}
+            if LLM_REASONING_EFFORT not in ("", "off", "none", "default", "auto"):
+                extra_body["reasoning"] = {"effort": LLM_REASONING_EFFORT}
+        if LLM_SERVICE_TIER not in ("", "default", "off", "none"):
+            extra_body["service_tier"] = LLM_SERVICE_TIER
+        request_options = {"extra_body": extra_body} if extra_body else {}
+        client = _get_client()
+        logger.info("LLM 预热开始：前缀 %d 段、参考图 %d 张（%.0f KB）",
+                    len(prefix_sections), len(ref_stats), sum(kb for _, _, kb in ref_stats))
+        if LLM_CACHE_MODE == "openai_explicit":
+            response = client.responses.create(
+                model=DASHSCOPE_MODEL, input=_build_responses_input(messages), **request_options)
+        else:
+            response = client.chat.completions.create(
+                model=DASHSCOPE_MODEL, messages=messages, **request_options)
+        _log_usage(response)
+        elapsed = time.time() - started
+        logger.info("LLM 预热完成，耗时 %.2f 秒（首轮应看到 cached_tokens 命中）", elapsed)
+        return elapsed
+    except Exception as error:  # noqa: BLE001 —— 预热永远不能影响主流程
+        logger.warning("LLM 预热失败（忽略，首轮仍会自行建连）: %s", error)
+        return None

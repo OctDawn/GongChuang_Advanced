@@ -452,6 +452,11 @@ class PushController:
             self.image_writer.join(timeout=3.0)
 
     def run(self):
+        # 就绪即预热：后台发一次极小请求，提前完成建连 + 参考图编码 + 30 分钟前缀缓存写入。
+        # 首轮真实请求因此直接命中缓存（实测可省 3.7~9.3 秒）；线程是 daemon，
+        # 失败只 warning，绝不阻塞下面等 a/c，也不占 LLM_FALLBACK_TIMEOUT 的预算。
+        threading.Thread(target=self.shape_recognizer.warm_up,
+                         name="llm-warmup", daemon=True).start()
         while True:
             command = self.wait_for_start_or_check()
             if command == "c":

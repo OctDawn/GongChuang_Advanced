@@ -2,7 +2,7 @@
 
 import logging
 
-from llm.qw import LLMError, LLMDeadlineExceeded, qwen_realise
+from llm.qw import LLMError, LLMDeadlineExceeded, qwen_realise, warm_up as warm_up_llm
 from llm.prompt import (
     COLOR_VOCAB, SHAPE_VOCAB, COLOR_EN, SHAPE_EN, match_vocab,
     build_classify_prompt, build_classify_prefix,
@@ -97,6 +97,25 @@ class ShapeRecognizer:
             logger.info("登记本轮新形状 %s: %s", shape, result["description"])
         return shape
 
+    def classify_prefix_sections(self):
+        """分类请求的固定前缀段。
+
+        预热（warm_up）和正式请求（classify）共用这一个构造函数：前缀必须字节一致
+        才能命中 30 分钟显式缓存，两边各写一份迟早会漂移。
+        """
+        records = self.memory.records
+        return [
+            (build_classify_prefix(self.shape_examples, empty_count=len(self.empty_crops)),
+             self.empty_crops + [example["image"] for example in self.shape_examples]),
+            (build_classify_prompt(records, self.shape_examples,
+                                   empty_count=len(self.empty_crops)),
+             self.memory.reference_images()),
+        ]
+
+    def warm_up(self):
+        """就绪后后台预热 LLM 链路与前缀缓存；失败静默。"""
+        return warm_up_llm(self.classify_prefix_sections())
+
     def classify(self, frames, response_path=None, total_timeout=40.0):
         decisions = []
         try:
@@ -105,13 +124,7 @@ class ShapeRecognizer:
             records = self.memory.records
             # 送模型的识别区图统一施加 DETECT_LLM_INSET；手工准备的形状示例图不裁。
             views = [crop_detect_llm(frame) for frame in frames]
-            prefix_sections = [
-                (build_classify_prefix(self.shape_examples, empty_count=len(self.empty_crops)),
-                 self.empty_crops + [example["image"] for example in self.shape_examples]),
-                (build_classify_prompt(records, self.shape_examples,
-                                       empty_count=len(self.empty_crops)),
-                 self.memory.reference_images()),
-            ]
+            prefix_sections = self.classify_prefix_sections()
 
             # 一次携带全部参考图；只有 API 包装层处理格式/网络异常重试。
             result = self.request(
