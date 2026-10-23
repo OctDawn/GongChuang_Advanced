@@ -35,6 +35,13 @@
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
+**10/23 hrx**
+- 送图定版 full + 1024，square 退役
+- 新增启动预热：建连 + 30m 前缀缓存
+- 手动启动自动读 `.env`（dotenv 模块）
+- 冷启动验收通过，服务已 enable
+- 手册修掉三机位/四别名的旧说法
+
 **10/17 hrx**
 - 识别区定版四路，④ 水平侧视上线
 - 机位数改环境变量；支持试验第 4 路
@@ -193,10 +200,10 @@ GongChuang_Advanced/
 ├── .gitattributes               # 全仓 LF（.sh 必须 LF，否则板上报 'bash\r'）
 ├── .env.example / .env          # .env 已 gitignore，含 key 与代理三行
 ├── llm/                         # 大模型层
-│   ├── qw.py                    # OpenAI 客户端：缓存模式、重试、图片编码
+│   ├── qw.py                    # OpenAI 客户端：缓存模式、重试、图片编码、启动预热
 │   ├── prompt.py                # 词表、提示词、纠错提示
-│   ├── shape_recognition.py     # 三机位识别、校验、形状登记
-│   ├── shape_memory.py          # 本次运行的形状参考图库（3 视角拼图）
+│   ├── shape_recognition.py     # 多机位识别、校验、形状登记（机位数随常量）
+│   ├── shape_memory.py          # 本次运行的形状参考图库（N 视角拼图，默认 4）
 │   ├── empty_examples.py        # 空场景图与带标签示例加载
 │   └── example/                 # 3 张空场景（托盘/顶部/底部）+ 11 张形状示例（顶部/底部成对）
 ├── yolo/                        # 本地 NPU 层（LLM 版按需使用）
@@ -255,8 +262,9 @@ GongChuang_Advanced/
 
 > 兜底：LLM 超时或失败时回 `0`（不回落 YOLO，见下文 `YOLO_FALLBACK`）。查栏失败则保守回全 `1`。
 >
-> **图号 ↔ 机位是写死在 prompt 里的契约**：图1 = ①斜上、图2 = ②斜上、图3 = 正下仰视。
-> 三台相机装错位置会让模型按错误的视角关系推理（见「换 USB 口 / 换相机后怎么做」）。
+> **图号 ↔ 机位是写死在 prompt 里的契约**：图1 = ①斜上、图2 = ②斜上、图3 = ③正下仰视、
+> 图4 = ④水平侧视（机位数 = `STAGE_TWO_DETECTION_COUNT`）。四台相机装错位置会让模型按错误的
+> 视角关系推理（见「换 USB 口 / 换相机后怎么做」）。
 
 ### 显示屏
 
@@ -267,8 +275,8 @@ GongChuang_Advanced/
 
 ### 线程与故障处理
 
-- **四路摄像头线程**（托盘 1 + 识别区 3）：`maxsize=1` 队列只留最新帧；`get_frame_retry`
-  连续 5 次取不到（或全是近纯色废帧）才判故障。
+- **五路摄像头线程**（托盘 1 + 识别区 4）：每路一个 `maxsize=1` 队列只留最新帧；`get_frame`
+  连续多次取不到（或全是近纯色废帧）才判故障。
 - **串口线程**：独立收发，读写异常置位 `stop_event`。
 - **显示线程**：见上；门控用一个「永不清除」的唤醒位，避免和会立即 `clear()` 的事件抢采样。
 - **主线程**：阶段编排。任一上游故障 → 抛 `CameraStopped` → 清理退出；所有等待都带超时，不会永久阻塞。
@@ -310,8 +318,8 @@ python tools/offline_debug.py --list
 
 | 文件 | 内容 |
 | --- | --- |
-| `view_1..3.jpg` | 相机原始帧（未裁剪） |
-| `sent_1..3.jpg` | **模型真正看到的那张**（crop_square + `DETECT_LLM_INSET` → 532×532） |
+| `view_1..N.jpg` | 相机原始帧（未裁剪），N = 机位数（默认 4） |
+| `sent_1..N.jpg` | **模型真正看到的那张**：`full` → 1024×576，`square` → 532×532 |
 | `reply_01_classify.txt` | 模型原始回复（重试带 `_try2` 后缀，每次都留） |
 | `result.jsonl` | 每次 run 一行：status/颜色/形状/贴纸、总耗时、真实请求耗时、token、payload、错误 |
 | `meta.json` | 设备、模型、缓存模式、机位顺序、时间戳 |
@@ -328,11 +336,13 @@ python tools/offline_debug.py --list
 
 ### 送图尺寸与速度
 
-识别区送什么图由两个环境变量控制，**默认 `square`（与原来完全一致，不动就不变）**：
+识别区送什么图由两个环境变量控制。**代码默认仍是 `square`，线上定版是 `full` + 1024**——
+所以 `.env` 里必须显式写这两行，漏了会静默退回 `square`（居中裁 720，边角物体被切掉，而且日志
+只打一行「送图模式: square」不会报错）：
 
 | 配置 | 实际送模型尺寸 | tokens/图（实测标度） | 视野 |
 | --- | --- | --- | --- |
-| `DETECT_CROP_MODE=square`（默认） | 532×532 | ≈ 300 | **只看中间 720 宽**，边角被切掉 |
+| `DETECT_CROP_MODE=square` | 532×532 | ≈ 300 | **只看中间 720 宽**，边角被切掉（仅代码默认值，已退役） |
 | `full` + `DETECT_SEND_MAX_SIDE=768` | 768×432 | ≈ 370 | 全幅（细节打折） |
 | `full` + `DETECT_SEND_MAX_SIDE=1024` | 1024×576 | ≈ 645 | 全幅 ✅ 推荐 |
 | `full` + `DETECT_SEND_MAX_SIDE=1280` | 1280×720（原图） | ≈ 1035 | 全幅、细节不损 |
@@ -343,6 +353,7 @@ python tools/offline_debug.py --list
   1024×576 ≈ 645，1280×720 ≈ 1035。
 - 从 `square` 换到 `full` + 1024：prompt 7944 → 8979，**每图多 345，整体 +13%**；
   请求耗时中位 4.39s → 4.05s——**差异完全在单次波动（2.7~6.9s）的噪声里**。
+  （这是 10/17 的旧数字；例图扩到 11 张后定版 prompt 已涨到约 10320，增量全在参考图与规则，与送图模式无关。）
 - **质量差距是决定性的**：同一组图上 `square` 三次给了三个答案（其中一次模型自述
   “物体在各视角中均被画面截断”），`full` + 1024 三次全对且一致。
 - **坑：`LLM_MAX_SIDE` 会二次封顶**。`qw.py` 发送前还有一道 `_downscale(…, LLM_MAX_SIDE)`，
@@ -511,17 +522,17 @@ python tools/preview_camera.py --camera detect_up1 --http 8080 --tray
 sudo systemctl start wave-vision-llm
 ```
 
-- **`--tray` 这个开关一定要加**（名字是历史遗留，对识别区来说它画的是识别区叠加框）：
-  **蓝框** = 采集端裁出的正方形（1280×720 → 720×720），**红框** = 真正发给大模型的范围
+- **`--tray` 的叠加框只对 `square` 模式成立**（名字是历史遗留，对识别区来说它画的是识别区叠加框）：
+  **蓝框** = 采集端裁出的正方形（1280×720 → 720×720），**红框** = square 模式下真正发给模型的范围
   （再按 `DETECT_LLM_INSET` 每边内缩 0.13 → 532×532）。
-  调机位时让物体**落在红框里、居中、尽量占满**——那才是模型实际看到的取景。
+  > ⚠️ **定版是 `full`，而 `preview_camera.py` 还没跟随 `DETECT_CROP_MODE`**，它算的仍是 square 的红框。
+  > 要看真正送模型的图，用 `python tools/offline_debug.py --latest --dry-run` 生成的 `sent_1..4.jpg`。
+- **定版 `full` 下的取景要求变了**：不要求居中占满，物体在画面内就行（边角也能拍全）；
+  但 720p 全幅缩到 1024×576 后单件细节比 532 方图少，且四角有镜头畸变，尽量让物体占画面 1/4 以上。
 - `--camera` 取值：`pallet` / `detect_up1` / `detect_up2` / `detect_down`（旧命令 `detect` = `detect_up1`）。
-- **裁剪发生在软件里，不在相机里**：相机永远输出 1280×720，采集线程再做 `crop_to_square` →
-  720×720（**左右各切掉 280 px，只有中间那 720 宽有效**）→ 内缩 0.13 → 532×532 送给模型。
+- **裁剪/缩放在软件里，不在相机里**：相机永远输出 1280×720；`full` 模式不裁边、等比缩到长边 1024
+  （1024×576），`square` 模式才 `crop_to_square` → 720×720（左右各切掉 280 px）→ 内缩 0.13 → 532×532。
   所以**不要去把相机分辨率改成正方形**：多数 UVC 不支持，会退化成缩放或默认值，反而更糊。
-  安装时要保证物体落在中间那个正方里（就是 `--tray` 的蓝框）。
-  **如果物体可能出现在画面四角**（新机位容易这样），把 `DETECT_CROP_MODE` 设成 `full`，
-  改成“不裁边 + 等比缩小”（见「送图尺寸与速度」）。
 - 想在板子自己的屏上开窗口、并同时看「实际发给模型的图」：
   `DISPLAY=:0 python tools/preview_camera.py --camera detect_up1 --show-llm`
   窗口模式按键：`q`/`Esc` 退出、`s` 存快照、`o` 开关叠加框、`c` 开关分栏线。
@@ -540,7 +551,7 @@ for v in 0 2 4 6; do printf "video%s  " $v; udevadm info -q property -n /dev/vid
 sudo cp deploy/70-wave-cameras.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=video4linux --action=add
-# 4) 验收：四个别名要指向真实采集节点（index0）
+# 4) 验收：五个别名要指向真实采集节点（index0）
 ls -l /dev/wave/
 python tools/probe_cameras.py     # 四路 90/90 才算过
 ```
@@ -579,22 +590,23 @@ python main_push_llm.py
 | `YOLO_FALLBACK` | `0` | `0` = 不加载 YOLO 模型，失败即回 `0`；`1` = 启用回落 |
 | `LLM_JPEG_QUALITY` | `92` | 发送前 JPEG 质量（85 会把薄壁口沿压掉） |
 | `LLM_IMAGE_SCALE` | `1.0` | 发送前等比缩放 |
-| `LLM_MAX_SIDE` | `1024` | 图片最长边（对当前 720 图是空转） |
+| `LLM_MAX_SIDE` | `1024` | 图片最长边的**最终天花板**：比它大的送图尺寸会被悄悄压回（见「送图尺寸与速度」） |
 | `LLM_REF_MAX_SIDE` | `512` | **只作用于前缀固定参考图**，压体积收益最大 |
 | `LLM_REASONING_EFFORT` | `low` | 砍生成阶段长尾；`off` = 用服务端默认 |
 | `LLM_KEEPALIVE_EXPIRY` | `20` | 连接空闲保活秒数；太长会复用僵尸连接 |
+| `LLM_WARMUP` | `1` | 启动预热：提前建连 + 写入 30 分钟前缀缓存；`0` 关闭（见「启动预热」） |
 | `LLM_TIMEOUT` | `60` | 单次请求超时（实际受 `LLM_FALLBACK_TIMEOUT` 约束） |
 | `LLM_STICKER_DECODE` | `0` | 贴纸解码总开关，`0` 时 label 只取 LLM 给的 kind/描述 |
 | `SCREEN_OFF_UNTIL_START` | `1` | 上电只铺纯黑，收到首个 `a`/`c` 才画表格 |
 | `SCREEN_DPMS` | `0` | `1` 时用 `xset dpms force off/on` 真灭背光（需 x11-xserver-utils） |
 | `DISPLAY_VIEW_INDEX` | 空（=0） | 显示屏「图片」列取哪个机位：`0`=①斜上（默认）、`1`=②斜上、`2`=③正下 |
-| `DETECT_CROP_MODE` | `square` | 识别区送图方式：`square`=居中方正 720→内缩 532（物体在边角会被切掉）；`full`=全幅缩放（见「送图尺寸与速度」） |
+| `DETECT_CROP_MODE` | `full` | 送图方式：`full`=全幅等比缩放（**定版**）；`square`=居中方正 720→内缩 532（已退役，边角会被切掉）。**代码默认仍是 `square`，`.env` 不写就静默退回** |
 | `DETECT_SEND_MAX_SIDE` | `1024` | `full` 模式的长边上限（只缩不放）：`768` 更快 / `1024` 均衡 / `1280` 原图直发 |
 | `STAGE_TWO_DETECTION_COUNT` | 空（=4） | 识别区机位数，默认 4；写 `3` 退回三路（见「识别区四路机位」），会同时改取帧路数/prompt/记忆视角数 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | `http://127.0.0.1:7890` | **必须写进 `.env`**：systemd 不读 `.bashrc` |
 | `NO_PROXY` | `localhost,127.0.0.1,…` | 别把代理自己排除掉 |
 | `CAMERA_PALLET_ID` | 空（=别名） | 覆盖托盘相机路径，默认 `/dev/wave/cam_pallet` |
-| `CAMERA_DETECT_1/2/3/4` | 空（=别名） | 覆盖识别区四路，默认 `/dev/wave/cam_detect_1/2/3` |
+| `CAMERA_DETECT_1/2/3/4` | 空（=别名） | 覆盖识别区四路，默认 `/dev/wave/cam_detect_1..4` |
 
 改完重启生效：`sudo systemctl restart wave-vision-llm`（**不需要** daemon-reload）。
 
@@ -624,7 +636,7 @@ python main_push_llm.py
 
 ```bash
 # 1) 用真实机位拍一组（张数 = 机位数）
-python tools/offline_debug.py --capture --dry-run      # 存 view_1..3.jpg
+python tools/offline_debug.py --capture --dry-run      # 存 view_1..N.jpg
 # 2) 挑图改名放进 llm/example/，再在 llm/empty_examples.py 的 SHAPE_EXAMPLES 里登记
 # 3) 自检：文件名、词表、孤儿图、形状覆盖
 python tools/check_examples.py
@@ -643,12 +655,21 @@ python tools/set_empty_reference.py <未裁剪原图> --scene pallet
 
 ### 图片链路
 
+**定版（`full`）**：
+
+```text
+相机 1280×720 → 不裁边 → 等比缩到长边 1024（1024×576）→ JPEG 92
+```
+
+**旧模式（`square`，已退役）**：
+
 ```text
 相机 1280×720 → crop_to_square 720×720 → DETECT_LLM_INSET 每边内缩 0.13 → 532×532 → JPEG 92
 ```
 
+- 1024 正好等于 `LLM_MAX_SIDE`，所以不会被 `qw.py` 再压一次；想上 1280 必须两个都改；
 - 前缀参考图单独按 `LLM_REF_MAX_SIDE=512` 缩；
-- 空场景参考图与实时画面走同一套裁剪（`empty_examples` 里只裁一次，便于命中编码缓存）；
+- 空场景参考图与实时画面走同一套预处理（`empty_examples` 里只算一次，便于命中编码缓存）；
 - 形状示例图不裁，保持手工准备的样子。
 
 ### 固定前缀与显式缓存
@@ -665,7 +686,35 @@ LLM 用量: prompt_tokens=… cached_tokens=… cache_write_tokens=… completio
 LLM 响应: id=… request_id=… service_tier=…
 ```
 
-参考值：前缀约 7900 tokens，`cached_tokens≈6857`（命中率 86%），单次真实载荷 11 张图约 434 KB。
+参考值（10/22 实测，`full` + 1024）：前缀约 **10320** tokens，其中 `cached_tokens≈7520`（命中率 73%）、
+未命中约 **2800**（这部分每轮都重新计费）；单次真实请求 **17 张图**（4 张当前视角 + 13 张前缀参考图，
+即 2 张空场景 + 11 张形状示例；形状记忆每多登记 1 个形状再多 N 张视角图）。
+
+### 启动预热（`LLM_WARMUP`）
+
+就绪后（`PushController.run()` 开头）起一个后台 daemon 线程 `llm-warmup`，用与第一轮**完全相同的
+前缀**发一次极小请求，结果丢弃。一次请求办三件事：
+
+1. **建连**：DNS + TCP + TLS + 代理隧道，连接留在 keepalive 池里复用；
+2. **参考图编码**：前缀里的固定图走 `_ENCODE_CACHE`，正式请求不再重复缩放/编码/base64；
+3. **前缀缓存**：显式缓存 `ttl=30m` 提前写入，第一轮真实请求直接 `cached_tokens` 命中。
+
+日志形态：
+
+```text
+LLM 预热开始：前缀 2 段、参考图 13 张（… KB）
+LLM 用量: prompt_tokens=… cached_tokens=0 cache_write_tokens=… completion_tokens=…
+LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
+```
+
+边界：
+
+- **只对第一轮有意义**。之后每轮的请求本身就在 20 秒保活窗口内、缓存每轮自动续期，稳态 3~4 秒不变；
+- **ttl 是 30 分钟**：开机后闲置超过半小时才开工，缓存已过期，首轮仍走冷路径；
+- 线程是 daemon，异常只 `warning`，**不阻塞等 `a`/`c`、不占 `LLM_FALLBACK_TIMEOUT` 的 15 秒**；
+- 前缀必须与 `classify()` 字节一致才命中，所以两边共用
+  `ShapeRecognizer.classify_prefix_sections()`——改 prompt 时不要只改其中一处；
+- 关掉：`.env` 里 `LLM_WARMUP=0`（首轮自己付建连与缓存重建的代价）。
 
 ### YOLO fallback
 
@@ -679,14 +728,14 @@ LLM 响应: id=… request_id=… service_tier=…
 ### 形状记忆（仅本次运行）
 
 - 词表外形用 `new` 登记为 `unknown_001`，同一件再出现返回 `remembered`；
-- 参考图为该形状的 3 个固定机位视角，按 2 列拼图（奇数视角补一格黑），每格 384×384；
+- 参考图为该形状的 N 个固定机位视角（默认 4），按 2 列拼图（奇数视角补一格黑），每格 384×384；
 - 重启新建会话、重新学习；旧图保留供排查。
 
 ```text
 capture/images/<启动时间>/shape_memory_<会话ID>/
 ├── memory.json
-├── unknown_001_<随机ID>/view_1..3.jpg
-└── pending/<随机ID>/{view_1..3.jpg, review.json}   # 未归类现场与原因
+├── unknown_001_<随机ID>/view_1..N.jpg
+└── pending/<随机ID>/{view_1..N.jpg, review.json}   # 未归类现场与原因
 ```
 
 `uncertain`（证据不足）是合法状态：留档、不登记，本件回 `0`。**`review.json` 是排查的第一现场**，里面有失败原因原文。
@@ -810,7 +859,7 @@ ssh orangepi@192.168.43.5 'sudo systemctl restart wave-vision-llm'
 ```bash
 systemctl is-enabled wave-vision-llm mihomo lightdm
 uptime -s
-journalctl -u wave-vision-llm -b --no-pager | grep -E '就绪|网络就绪|启动主程序|待机中|display stopped|ERROR'
+journalctl -u wave-vision-llm -b --no-pager | grep -E '就绪|网络就绪|预热完成|启动主程序|待机中|display stopped|ERROR'
 pgrep -af 'main_push_llm|start_vision'
 systemctl --failed --no-pager
 ```
@@ -821,7 +870,7 @@ systemctl --failed --no-pager
 ### 相机
 
 ```bash
-ls -l /dev/wave/                                          # 四个别名在不在、指向哪个 videoN
+ls -l /dev/wave/                                          # 五个别名在不在、指向哪个 videoN
 v4l2-ctl --list-devices                                   # 相机枚举（注意别把 video-dec0/enc0 当相机）
 lsusb -t                                                  # 几条总线、相机分别挂在哪
 sudo dmesg | tail -40 | grep -iE 'uvc|bandwidth|ENOSPC|reset'
@@ -917,7 +966,7 @@ python tools/probe_cameras.py --devices /dev/video0 /dev/video4 /dev/none /dev/n
 ### 离线测试（PC，无需硬件）
 
 ```bash
-python test_llm.py classify <图1> <图2> <图3>      # 三机位分类
+python test_llm.py classify <图1> <图2> <图3> <图4>   # 四路分类（个数 = STAGE_TWO_DETECTION_COUNT）
 python test_llm.py pallet   <托盘俯视图>            # 查栏
 python tools/check_examples.py                      # 示例图自检
 ```
@@ -932,6 +981,12 @@ python tools/check_examples.py                      # 示例图自检
   如果能补一张“薄壁件倒过来放”的 ③ 视角，模型就能学到“内腔也可以出现在底部视角”。
 - **例图目前是临时俯拍/仰拍**，建议用 ①②③④ 四台真机位各拍一张，取景与线上完全一致。
 - **④ 平视还没有例图和空场景**：`llm/example/` 里没有平视示例；`empty_side.jpg` 也可以补一张（可选，缺了只是少一张背景参考）。
+- **空盘轮多跑一次请求**：模型给 `label_kind: "none"`，而校验器要求 `null` → 触发纠错重试，
+  每次空盘多花 3.6~4.2 秒。修法一行：`status=="empty"` 时把 `"none"`/`"null"`/`None` 都当合法（尚未改）。
+- **矮框（推料夹具）的 prompt 规则待补**：需要先有「带框的空场景图」`empty_top/bottom`，再改判据；
+  现在拷图补上去容易把夹具当成物件。
+- **`preview_camera.py` 未跟随 `DETECT_CROP_MODE`**：定版 `full` 下它画的“送模型红框”仍是 square 的结果，
+  只影响看框、不影响线上送图；修法是让它调 `crop_detect_llm` 前不固定 `crop_to_square`。
 - **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
 - `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
 - `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。
