@@ -180,10 +180,11 @@ SHAPE_CLASSES = (
 # SHAPE_CLASSES 是 yolo/fallback.py 的模型类别表，顺序必须与 shape_detect_area_data.yaml 一致，
 # 所以**绝对不要把新名字直接加进 SHAPE_CLASSES**，否则回落路径会把索引映到错误的形状上。
 # 这里的条目对应两类情况：
-#   1) 模型没训但竞赛货物里真实存在的形状（实心四棱柱、正多面体）；
+#   1) 模型没训但竞赛货物里真实存在、且与现有词表不重叠的形状（正多面体）；
 #   2) 中文表/显示表早就有、校验词表漏掉的（薄壁六棱柱——英文输出曾被判非法而重试）。
+# 注意：**不要加 prism4（四棱柱）**。正方体 ⊂ 四棱柱 ⊂ 长方体，与 cube/cuboid 重叠，
+# 加进来会让同一件在两轮之间被分成两个盒子；“四棱柱”已作为别名归到 cuboid（见 llm/prompt.py）。
 LLM_SHAPE_EXTRA = (
-    'prism4',             # 四棱柱（实心）
     'prism6_thinWalled',  # 薄壁六棱柱
     'octahedron',         # 正八面体
     'dodecahedron',       # 正十二面体

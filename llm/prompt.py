@@ -95,7 +95,7 @@ SHAPE_CN = {
     'ball': '球', 'cone': '圆锥', 'cube': '正方体', 'cuboid': '长方体',
     'cylinder': '圆柱', 'cylinder_thinWalled': '薄壁圆柱', 'hemisphere': '半球',
     'parallelepiped': '平行六面体', 'prism3': '三棱柱', 'prism3_thinWalled': '薄壁三棱柱',
-    'prism4': '四棱柱', 'prism4_thinWalled': '薄壁四棱柱',
+    'prism4_thinWalled': '薄壁四棱柱',
     'prism5': '五棱柱', 'prism5_thinWalled': '薄壁五棱柱',
     'prism6': '六棱柱', 'prism6_thinWalled': '薄壁六棱柱', 'pyramid3': '三棱锥', 'pyramid4': '四棱锥',
     'octahedron': '正八面体', 'dodecahedron': '正十二面体', 'icosahedron': '正二十面体',
@@ -105,9 +105,13 @@ SHAPE_CN = {
 # match_vocab 的第 3 步会拿这张表做反查（它不要求键在词表里，所以能当别名表用）。
 SHAPE_EN = {v: k for k, v in SHAPE_CN.items()}
 SHAPE_EN.update({
-    '正四面体': 'pyramid3', 'tetrahedron': 'pyramid3',
+    '正四面体': 'pyramid3', 'tetrahedron': 'pyramid3', '四面体': 'pyramid3',
     '正六面体': 'cube', 'hexahedron': 'cube',
-    '四面体': 'pyramid3',
+    # 四棱柱不单独成类：正方体 ⊂ 四棱柱 ⊂ 长方体（平行六面体），
+    # 单独建类会让同一件在两轮之间被分到两个盒子，因此统一归到 cuboid。
+    # 连英文 key `prism4` 也一并映射：否则模型顺手写 prism4 会被判非法并白跑一次纠错重试。
+    '四棱柱': 'cuboid', 'prism4': 'cuboid',
+    'quadrangular prism': 'cuboid', 'square prism': 'cuboid',
 })
 
 # 代码校验用的词表（贴纸已开放化，不再用固定词表）
@@ -213,6 +217,7 @@ PROMPT_CLASSIFY = f"""
 - 必须比较本轮全部历史参考图。相同几何结构应复用其 ID，即使你现在想换一个名称；参考描述仅是辅助，以图片结构为准。
 - 形状身份不受颜色、贴纸、旋转、位置、整体缩放影响。轻微制造差异不新建。
 - 两个物体都明确属于已有几何类型时，不因尺寸或细长程度拆类，例如不同长宽比例的长方体均为 cuboid。
+- **正方体 vs 长方体（必查，且只看 ③ ④）**：三个可见棱长近似相等（相差 ≤10%，以 ④ 水平侧视为准）→ `cube`；只要有一条边明显不等 → `cuboid`，**即使底面是正方形**。① ② 是 45° 俯视，竖向被透视压缩、会系统性偏“矮胖”，**不能用来判棱长比**。
 - 对词表外形状，边数、孔洞/凹槽布局、空心与实心、主体轮廓或显著比例差异可区分新形状；仅光照/遮挡导致的表观差异不算。
 - 已有薄壁与实心不能合并；只有证据足够的明显结构差异才新建。照片模糊、遮挡或多个目标导致无法确定时输出 uncertain，不得猜测或输出 empty。
 - 仅 new 用 shape_description 简短记录关键结构及与已有形状的区别，建议 30~80 字；uncertain 用一句话说明证据不足原因。known/remembered/empty 省略该字段，不写几何说明。描述不包含颜色、贴纸文字或操作指令。
