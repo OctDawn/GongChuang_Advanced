@@ -41,6 +41,7 @@
 - 手动启动自动读 `.env`（dotenv 模块）
 - 冷启动验收通过，服务已 enable
 - 手册修掉三机位/四别名的旧说法
+- 预览框跟随送图模式，支持 ④
 
 **10/17 hrx**
 - 识别区定版四路，④ 水平侧视上线
@@ -522,14 +523,14 @@ python tools/preview_camera.py --camera detect_up1 --http 8080 --tray
 sudo systemctl start wave-vision-llm
 ```
 
-- **`--tray` 的叠加框只对 `square` 模式成立**（名字是历史遗留，对识别区来说它画的是识别区叠加框）：
-  **蓝框** = 采集端裁出的正方形（1280×720 → 720×720），**红框** = square 模式下真正发给模型的范围
-  （再按 `DETECT_LLM_INSET` 每边内缩 0.13 → 532×532）。
-  > ⚠️ **定版是 `full`，而 `preview_camera.py` 还没跟随 `DETECT_CROP_MODE`**，它算的仍是 square 的红框。
-  > 要看真正送模型的图，用 `python tools/offline_debug.py --latest --dry-run` 生成的 `sent_1..4.jpg`。
-- **定版 `full` 下的取景要求变了**：不要求居中占满，物体在画面内就行（边角也能拍全）；
+- **`--tray` 的叠加框跟着 `DETECT_CROP_MODE` 变**（名字是历史遗留，对识别区来说它画的是识别区叠加框）：
+  - `square`：**蓝框** = 居中正方形（1280×720 → 720×720），**红框** = `DETECT_LLM_INSET` 内缩后的 532×532；
+  - `full`（定版）：不裁边，**红框** = `DETECT_FULL_INSET`（当前为 0，即整个画面），角上标出实际送图尺寸 1024×576。
+  `--show-llm` 和线上走同一条链路（`detect_frame_preprocessed` → `crop_detect_llm`），看到的就是真送图。
+- **定版 `full` 下的取景要求**：不要求居中占满，物体在画面内就行（边角也能拍全）；
   但 720p 全幅缩到 1024×576 后单件细节比 532 方图少，且四角有镜头畸变，尽量让物体占画面 1/4 以上。
-- `--camera` 取值：`pallet` / `detect_up1` / `detect_up2` / `detect_down`（旧命令 `detect` = `detect_up1`）。
+- `--camera` 取值：`pallet` / `detect_up1` / `detect_up2` / `detect_down` / `detect_side`（④ 水平侧视），
+  机位个数跟随 `STAGE_TWO_DETECTION_COUNT`；旧命令 `detect` = `detect_up1`。
 - **裁剪/缩放在软件里，不在相机里**：相机永远输出 1280×720；`full` 模式不裁边、等比缩到长边 1024
   （1024×576），`square` 模式才 `crop_to_square` → 720×720（左右各切掉 280 px）→ 内缩 0.13 → 532×532。
   所以**不要去把相机分辨率改成正方形**：多数 UVC 不支持，会退化成缩放或默认值，反而更糊。
@@ -938,7 +939,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | --- | --- |
 | `offline_debug.py` | **离线调参主力**：四路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
 | `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
-| `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框 |
+| `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down/detect_side`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框（跟随 `DETECT_CROP_MODE`） |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |
 | `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
 | `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
@@ -985,8 +986,6 @@ python tools/check_examples.py                      # 示例图自检
   每次空盘多花 3.6~4.2 秒。修法一行：`status=="empty"` 时把 `"none"`/`"null"`/`None` 都当合法（尚未改）。
 - **矮框（推料夹具）的 prompt 规则待补**：需要先有「带框的空场景图」`empty_top/bottom`，再改判据；
   现在拷图补上去容易把夹具当成物件。
-- **`preview_camera.py` 未跟随 `DETECT_CROP_MODE`**：定版 `full` 下它画的“送模型红框”仍是 square 的结果，
-  只影响看框、不影响线上送图；修法是让它调 `crop_detect_llm` 前不固定 `crop_to_square`。
 - **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
 - `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
 - `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。

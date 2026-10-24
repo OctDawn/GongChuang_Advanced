@@ -16,13 +16,17 @@ shared/const.py），叠加框也直接读 const 里的几何参数，所以"你
     # 想在 MobaXterm 的 X11 窗口里看（不改 DISPLAY）
     python tools/preview_camera.py --display pc
 
-    # 识别区某一路机位（①② 斜上相对、③ 正下方仰视）
+    # 识别区某一路机位（①② 斜上相对、③ 正下方仰视、④ 水平侧视）
     python tools/preview_camera.py --camera detect_up1 --http 8080
     python tools/preview_camera.py --camera detect_up2
     python tools/preview_camera.py --camera detect_down
+    python tools/preview_camera.py --camera detect_side
 
     # 同时弹一个窗，显示"实际发给大模型的图"
     DISPLAY=:0 python tools/preview_camera.py --show-llm
+
+叠加框跟着 `DETECT_CROP_MODE` 变：square 画「居中正方形 + 内缩后的送图范围」；
+full 画「不裁边、全幅缩到长边 `DETECT_SEND_MAX_SIDE`」的实际情况。
 
 按键（本地窗口模式）：q / Esc 退出，s 存快照，o 开关托盘框，c 开关分栏线
 网页模式：页面上有 tray / columns / snapshot 按钮
@@ -43,24 +47,30 @@ import cv2
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shared.common import (  # noqa: E402
-    initial_cap, crop_to_square, crop_pallet_llm, crop_detect_llm,
+    initial_cap, crop_pallet_llm, crop_detect_llm, detect_frame_preprocessed,
 )
 from shared.const import (  # noqa: E402
-    CAMERA_PALLET_ID, DETECT_CAMERA_IDS,
+    CAMERA_PALLET_ID, DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES,
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
     TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX, COLUMN_COUNT,
-    DETECT_LLM_INSET,
+    DETECT_LLM_INSET, DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
 )
 
 CAMERAS = {
     "pallet": (CAMERA_PALLET_ID, "托盘上方广角摄像头", PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS),
-    "detect_up1": (DETECT_CAMERA_IDS[0], "识别区① 斜上方", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-    "detect_up2": (DETECT_CAMERA_IDS[1], "识别区② 斜上方(相对)", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-    "detect_down": (DETECT_CAMERA_IDS[2], "识别区③ 正下方仰视", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
-    # 旧命令兼容：--camera detect 等价于 detect_up1
-    "detect": (DETECT_CAMERA_IDS[0], "识别区① 斜上方", DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS),
 }
+
+# 识别区按 DETECT_CAMERA_IDS 的个数生成（默认 4 路），名字直接取 const：
+# 这里写死三路的话，④ 永远选不到，而且换机位数时也不会跟着变。
+_DETECT_ALIASES = ("detect_up1", "detect_up2", "detect_down", "detect_side")
+for _index, _camera_id in enumerate(DETECT_CAMERA_IDS):
+    _alias = (_DETECT_ALIASES[_index] if _index < len(_DETECT_ALIASES)
+              else "detect_%d" % (_index + 1))
+    CAMERAS[_alias] = (_camera_id, DETECT_CAMERA_NAMES[_index],
+                       DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
+# 旧命令兼容：--camera detect 等价于 detect_up1
+CAMERAS["detect"] = CAMERAS["detect_up1"]
 
 # 供 HTTP 线程读取的共享状态
 STATE = {
@@ -120,8 +130,31 @@ def draw_pallet_overlay(frame, tray=True, columns=False):
 
 
 def draw_detect_overlay(frame):
-    """居中正方形框（采集端裁剪）+ 内缩框（真正发给大模型的范围）。"""
+    """按 DETECT_CROP_MODE 画「采集端裁的范围」与「真正发给大模型的范围」。
+
+    square：蓝框 = 居中正方形（crop_to_square），红框 = 再按 DETECT_LLM_INSET 内缩后的送图范围。
+    full  ：不裁边，红框 = 全幅按 DETECT_FULL_INSET 微调（当前为 0，即整个画面）。
+    """
     height, width = frame.shape[:2]
+    if DETECT_CROP_MODE == "full":
+        longest = max(height, width)
+        scale = (DETECT_SEND_MAX_SIDE / float(longest)
+                 if DETECT_SEND_MAX_SIDE > 0 and longest > DETECT_SEND_MAX_SIDE else 1.0)
+        put(frame, "full: no crop -> %dx%d (max_side %d)"
+            % (int(round(width * scale)), int(round(height * scale)), DETECT_SEND_MAX_SIDE),
+            (10, 26))
+        left = DETECT_FULL_INSET["left"]
+        top = DETECT_FULL_INSET["top"]
+        right = DETECT_FULL_INSET["right"]
+        bottom = DETECT_FULL_INSET["bottom"]
+        ix0, iy0 = int(width * left), int(height * top)
+        ix1, iy1 = width - int(width * right), height - int(height * bottom)
+        cv2.rectangle(frame, (ix0, iy0), (ix1, iy1), (0, 0, 255), 2)
+        if (left, top, right, bottom) != (0.0, 0.0, 0.0, 0.0):
+            put(frame, "red = DETECT_FULL_INSET L%.2f T%.2f R%.2f B%.2f"
+                % (left, top, right, bottom), (10, 52))
+        return frame
+
     side = min(height, width)
     sx0, sy0 = (width - side) // 2, (height - side) // 2
     cv2.rectangle(frame, (sx0, sy0), (sx0 + side, sy0 + side), (255, 128, 0), 2)
@@ -138,10 +171,15 @@ def draw_detect_overlay(frame):
 
 
 def llm_view(frame, scene):
-    """真正发给大模型的那张图。"""
+    """真正发给大模型的那张图。
+
+    与线上 read_camera → crop_detect_llm 的链路保持一致：**先按 DETECT_CROP_MODE
+    预处理**（square 才裁方，full 原样），再交给 crop_detect_llm。
+    以前这里无条件 crop_to_square，full 模式下会把全幅两侧裁掉再缩放，看到的是假图。
+    """
     if scene == "pallet":
         return crop_pallet_llm(frame)
-    return crop_detect_llm(crop_to_square(frame))
+    return crop_detect_llm(detect_frame_preprocessed(frame))
 
 
 def annotate(frame, scene):
