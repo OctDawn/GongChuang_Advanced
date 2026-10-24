@@ -35,6 +35,11 @@
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
+**10/24 hrx**
+- 词表补四棱柱/薄壁六棱柱/正多面体
+- 词表与 RKNN 类别表解耦
+- 新形状输出六字中文名上屏
+
 **10/23 hrx**
 - 送图定版 full + 1024，square 退役
 - 新增启动预热：建连 + 30m 前缀缓存
@@ -730,6 +735,10 @@ LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
 
 - 词表外形用 `new` 登记为 `unknown_001`，同一件再出现返回 `remembered`；
 - 参考图为该形状的 N 个固定机位视角（默认 4），按 2 列拼图（奇数视角补一格黑），每格 384×384；
+- **显示屏名字的优先级**：词表键 → 词表中文名（`SHAPE_DISPLAY_CN`）；词表外（`unknown_00N`）→
+  模型在 `new` 时给的六字中文名（`shape_name`，存在 `memory.json` 的 `name` 字段）；
+  没有就给 `新形状N`。注意：`shape_name` **只用于显示**，不参与归类、不参与记忆匹配；
+**一条判据**：同一轮里“颜色+形状键+贴纸”相同就归同一盒，名字长短不影响分拣。
 - 重启新建会话、重新学习；旧图保留供排查。
 
 ```text
@@ -740,6 +749,32 @@ capture/images/<启动时间>/shape_memory_<会话ID>/
 ```
 
 `uncertain`（证据不足）是合法状态：留档、不登记，本件回 `0`。**`review.json` 是排查的第一现场**，里面有失败原因原文。
+
+### 形状词表与模型类别（别混）
+
+| 常量 | 用途 | 能否加名字 |
+| --- | --- | --- |
+| `shared.const.SHAPE_CLASSES` | RKNN `shape_detect_area` 的**类别索引**，顺序必须与 `data.yaml` 一致 | ❌ 只有换模型时才跟着改 |
+| `shared.const.LLM_SHAPE_EXTRA` / `LLM_SHAPE_CLASSES` | 大模型识别词表（= 模型类别 + 补充） | ✅ 加在这里 |
+| `llm.prompt.SHAPE_CN` | 英文键 → 中文名，直接进 prompt | ✅ 必须与 `LLM_SHAPE_CLASSES` 同步 |
+| `shared.common.SHAPE_DISPLAY_CN` | 显示屏中文名 | ✅ 同上 |
+
+当前 **21 类** = 模型 16 类 + 补充 5 类：`prism4`（实心四棱柱）、`prism6_thinWalled`（薄壁六棱柱）、
+`octahedron` / `dodecahedron` / `icosahedron`（正八/十二/二十面体）。
+
+> 把一个名字加进 `SHAPE_CLASSES` 会**错位 YOLO 回落的类别索引**（`yolo/fallback.py` 按下标取名字），
+> 所以补充词一律走 `LLM_SHAPE_EXTRA`。`prism6_thinWalled` 以前只在中文表、不在校验词表里，
+> 模型输出英文键会被判非法并白白触发一次 3~4 秒的纠错重试。
+
+同义别名走 `llm.prompt.SHAPE_EN`（如 `正四面体`/`tetrahedron` → `pyramid3`、`正六面体`/`hexahedron` → `cube`），
+**不新增类别**——同一形状两种叫法会被拆成两个盒子。
+
+加词后必查（不依赖 cv2，PC 上就能跑）：
+
+```bash
+python -c "import llm.prompt as p; print(len(p.SHAPE_VOCAB), sorted(set(p.SHAPE_VOCAB)-set(p.SHAPE_CN)))"
+python tools/check_examples.py
+```
 
 ---
 
@@ -976,8 +1011,9 @@ python tools/check_examples.py                      # 示例图自检
 
 ## 待办 / 已知遗留
 
-- **例图覆盖不全**：现有 11 张只覆盖 `cube` / `prism4_thinWalled` / `prism5_thinWalled` / `prism6`，
-  词表里另外 12 类（球、圆锥、圆柱、半球、三棱柱…）还没有示例。实际赛题里出现的形状优先补。
+- **例图覆盖不全**：词表已有 21 类，示例只覆盖 `cube` / `prism4_thinWalled` / `prism5_thinWalled` / `prism6`，
+  其余（球、圆锥、圆柱、半球、四棱柱、正多面体…）都没有示例。新增的四棱柱/薄壁六棱柱/正八·十二·二十面体
+  属于“有名字无示例”，模型只能靠 prompt 描述判断，最容易两可——出现实物时优先补这 5 类的例图。
 - **缺“开口朝下”的例子**：三组薄壁件的开口都朝上（①② 能看到内腔，③ 看到封闭底面）。
   如果能补一张“薄壁件倒过来放”的 ③ 视角，模型就能学到“内腔也可以出现在底部视角”。
 - **例图目前是临时俯拍/仰拍**，建议用 ①②③④ 四台真机位各拍一张，取景与线上完全一致。

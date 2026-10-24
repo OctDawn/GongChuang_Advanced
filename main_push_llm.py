@@ -349,18 +349,29 @@ class PushController:
             self._show_discarded(color, shape, label, frames, "储物盒已满")
             return
 
-        object_name = object_display_name(color, shape, label)
+        object_name = self._object_name(color, shape, label)
         display_image = (frames[DISPLAY_VIEW_INDEX]
                          if len(frames) > DISPLAY_VIEW_INDEX else None)
         self.pending_display_row = (category, object_name, display_image.copy() if display_image is not None else None)
         self.send_queue.put(f"{category}\n")
         logger.info("阶段 2 结果: color=%s shape=%s label=%s category=%d", color, shape, label, category)
 
+    def _object_name(self, color, shape, label=None):
+        """显示屏「货物名称」：词表内用词表中文名，词表外（unknown_00N）用登记短名。
+
+        词表键永远优先（object_display_name 内部会先查 SHAPE_DISPLAY_CN）；
+        只有查不到时，才用形状记忆里登记的六字中文名，最后回退「新形状N」。
+        """
+        display = None
+        if isinstance(shape, str) and shape.startswith("unknown_"):
+            display = self.shape_recognizer.memory.display_name(shape)
+        return object_display_name(color, shape, label, shape_display=display)
+
     def _show_discarded(self, color, shape, label, frames, reason):
         """类别满/盒满：照旧回 0，但在显示屏「未归类」行留痕，避免静默丢件。"""
         self.discarded += 1
         self.pending_display_row = None
-        name = object_display_name(color, shape, label)
+        name = self._object_name(color, shape, label)
         image = (frames[DISPLAY_VIEW_INDEX].copy()
                  if len(frames) > DISPLAY_VIEW_INDEX else None)
         self.display_row_queue.put(RecognitionRow(

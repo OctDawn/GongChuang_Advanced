@@ -61,7 +61,16 @@ def parse_classify_result(result, records=()):
         label_description = label_description.strip()
     else:
         label_description = None
+    # shape_name 只服务显示屏：词表内形状一律用词表中文名，所以只在 new 时保留。
+    # 字段故意做成「可选」：缺了或超长都不触发纠错重试，直接回退「新形状N」——
+    # 展示字段不值得多花 3~4 秒。
+    shape_name = result.get("shape_name")
+    if status != "new" or not isinstance(shape_name, str):
+        shape_name = None
+    else:
+        shape_name = "".join(shape_name.split())[:6] or None
     return dict(status=status, color=color, shape=shape,
+                shape_name=shape_name,
                 label_kind=label_kind, label_description=label_description,
                 description=description.strip())
 
@@ -93,7 +102,8 @@ class ShapeRecognizer:
             return None
         shape = result["shape"]
         if result["status"] == "new":
-            shape = self.memory.add(result["description"], views)
+            shape = self.memory.add(result["description"], views,
+                                    name=result.get("shape_name"))
             logger.info("登记本轮新形状 %s: %s", shape, result["description"])
         return shape
 

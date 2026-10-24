@@ -44,7 +44,7 @@ class ShapeMemory:
             if not cv2.imwrite(str(directory / f"view_{i + 1}.jpg"), frame):
                 raise ShapeMemoryError("参考图片写入失败")
 
-    def add(self, description, frames):
+    def add(self, description, frames, name=None):
         if len(self._records) >= self.limit:
             raise ShapeMemoryError(f"本次运行形状图库已满（{self.limit}），不删除历史、不强行合并")
         if not isinstance(description, str) or not description.strip() or len(description) > 400:
@@ -55,6 +55,10 @@ class ShapeMemory:
         # 每次尝试使用不同目录；失败留下的诊断图片不妨碍后续重试。
         sample = shape_id + "_" + uuid.uuid4().hex
         record = {"id": shape_id, "description": description.strip(), "sample": sample}
+        # name 仅用于显示屏（六字中文短名）；缺失时 display_name() 回退「新形状N」。
+        # 它不参与归类与记忆匹配，存不存都不影响身份。
+        if isinstance(name, str) and name.strip():
+            record["name"] = name.strip()[:6]
         try:
             self._save_frames(self.root / sample, frames)
             candidate = self._records + [record]
@@ -64,6 +68,19 @@ class ShapeMemory:
         # 图片及索引全部成功才使 ID 生效；不会覆盖已有原型导致记忆漂移。
         self._records = candidate
         return shape_id
+
+    def display_name(self, shape_id):
+        """unknown_001 → 登记时的六字中文名；没有登记就回退「新形状N」。
+
+        词表内形状不经过这里（那走 common.SHAPE_DISPLAY_CN），所以词表名永远优先。
+        """
+        for record in self._records:
+            if record["id"] == shape_id:
+                if record.get("name"):
+                    return record["name"]
+                break
+        match = re.fullmatch(r"unknown_(\d{3})", str(shape_id))
+        return f"新形状{int(match.group(1))}" if match else str(shape_id)
 
     def reference_images(self):
         images = []

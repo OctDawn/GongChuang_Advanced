@@ -176,6 +176,20 @@ DETECT_AREA_COLOR_CLASSES = (
 SHAPE_CLASSES = (
     'ball', 'cone', 'cube', 'cuboid', 'cylinder', 'cylinder_thinWalled', 'hemisphere', 'parallelepiped', 'prism3', 'prism3_thinWalled', 'prism4_thinWalled', 'prism5', 'prism5_thinWalled', 'prism6', 'pyramid3', 'pyramid4'
 )
+# LLM 专用补充词：只给提示词 / 校验器 / 显示屏用，**不参与 RKNN 类别索引**。
+# SHAPE_CLASSES 是 yolo/fallback.py 的模型类别表，顺序必须与 shape_detect_area_data.yaml 一致，
+# 所以**绝对不要把新名字直接加进 SHAPE_CLASSES**，否则回落路径会把索引映到错误的形状上。
+# 这里的条目对应两类情况：
+#   1) 模型没训但竞赛货物里真实存在的形状（实心四棱柱、正多面体）；
+#   2) 中文表/显示表早就有、校验词表漏掉的（薄壁六棱柱——英文输出曾被判非法而重试）。
+LLM_SHAPE_EXTRA = (
+    'prism4',             # 四棱柱（实心）
+    'prism6_thinWalled',  # 薄壁六棱柱
+    'octahedron',         # 正八面体
+    'dodecahedron',       # 正十二面体
+    'icosahedron',        # 正二十面体
+)
+LLM_SHAPE_CLASSES = SHAPE_CLASSES + LLM_SHAPE_EXTRA
 # 贴纸模型类别（顺序与 models 里 label_detect_area 的 data.yaml 一致）：
 # 图案类识别出直接标记，码/文字类才解码
 LABEL_CLASSES = (

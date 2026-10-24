@@ -81,7 +81,7 @@ def build_json_correction_prompt(prompt, error):
     return prompt + PROMPT_JSON_CORRECTION.format(error=error)
 
 from shared.const import (
-    DETECT_AREA_COLOR_CLASSES, SHAPE_CLASSES,
+    DETECT_AREA_COLOR_CLASSES, LLM_SHAPE_CLASSES,
     STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
 )
 
@@ -95,17 +95,30 @@ SHAPE_CN = {
     'ball': '球', 'cone': '圆锥', 'cube': '正方体', 'cuboid': '长方体',
     'cylinder': '圆柱', 'cylinder_thinWalled': '薄壁圆柱', 'hemisphere': '半球',
     'parallelepiped': '平行六面体', 'prism3': '三棱柱', 'prism3_thinWalled': '薄壁三棱柱',
-    'prism4_thinWalled': '薄壁四棱柱', 'prism5': '五棱柱', 'prism5_thinWalled': '薄壁五棱柱',
+    'prism4': '四棱柱', 'prism4_thinWalled': '薄壁四棱柱',
+    'prism5': '五棱柱', 'prism5_thinWalled': '薄壁五棱柱',
     'prism6': '六棱柱', 'prism6_thinWalled': '薄壁六棱柱', 'pyramid3': '三棱锥', 'pyramid4': '四棱锥',
+    'octahedron': '正八面体', 'dodecahedron': '正十二面体', 'icosahedron': '正二十面体',
 }
+
+# 同义别名：归并到已有键，避免同一形状因叫法不同被拆成两个盒子。
+# match_vocab 的第 3 步会拿这张表做反查（它不要求键在词表里，所以能当别名表用）。
+SHAPE_EN = {v: k for k, v in SHAPE_CN.items()}
+SHAPE_EN.update({
+    '正四面体': 'pyramid3', 'tetrahedron': 'pyramid3',
+    '正六面体': 'cube', 'hexahedron': 'cube',
+    '四面体': 'pyramid3',
+})
 
 # 代码校验用的词表（贴纸已开放化，不再用固定词表）
 COLOR_VOCAB = list(DETECT_AREA_COLOR_CLASSES)
-SHAPE_VOCAB = list(SHAPE_CLASSES)
+# 注意用 LLM_SHAPE_CLASSES（= 模型类别 + LLM 补充），不是 SHAPE_CLASSES：
+# 前者是识别词表，后者是 RKNN 模型输出索引，两者不能混。
+SHAPE_VOCAB = list(LLM_SHAPE_CLASSES)
 
 # 反查表：中文名 -> 英文键（模型偶尔会输出中文，用反查表兜底）
+# SHAPE_EN 已在上面连同同义别名一起定义，这里不要再重建，否则别名会被覆盖掉。
 COLOR_EN = {v: k for k, v in COLOR_CN.items()}
-SHAPE_EN = {v: k for k, v in SHAPE_CN.items()}
 
 _logger = logging.getLogger("wave.vision")
 
@@ -174,7 +187,7 @@ PROMPT_CLASSIFY = f"""
 - 观察物体整体主色调，避开高光反光和浓重阴影；各图颜色有差异时选最稳定一致的颜色；不要被背景干扰。
 
 【形状判断规则】
-- 常见形状优先使用以下字典的键，但不符合时禁止硬套：
+- **词表优先**：先逐项比对下面的字典，能确认属于其中某个键时**必须**用该键（包括词表里有名字、但当轮没有示例图的形状，如正多面体）。只有全部词表项确实都对不上，才允许判 new；拿不准是“词表内”还是“词表外”时用 uncertain，不要拿 new 兜底：
 {_dict_block(SHAPE_CN)}
 - 棱柱/棱锥按底面边数分类。薄壁类（带 thinWalled）具有相对薄的壁和中空结构。
 - 当无法侧面判断棱柱时，按底面视角判断底面边数，注意不要混淆5棱柱和4棱柱。
@@ -196,6 +209,7 @@ PROMPT_CLASSIFY = f"""
 - 【黑件规则不要外推】上面这节只用于黑色/深色物体。彩色物体的开口内部可能是同色甚至更亮的面，仍按前述正面线索判断，不要因为“它不暗”就改判实心。
 - 带标签示例用于学习主体颜色与几何结构，其标签属于已有词表，不是历史 ID；不要照搬示例的背景、姿态或贴纸到当前物体。
 - 字典没有收录的常见几何体、薄壁几何体或其他形体，也允许登记为新形状。
+- **new 必须附一个中文短名**：`shape_name` 用不超过 6 个汉字的常见名词概括（如「薄壁五棱筒」「正十二面体」），只用于显示屏，**不参与记忆与归类**；不得写颜色、贴纸、姿态、整句描述或操作建议，也不得写英文/数字。
 - 必须比较本轮全部历史参考图。相同几何结构应复用其 ID，即使你现在想换一个名称；参考描述仅是辅助，以图片结构为准。
 - 形状身份不受颜色、贴纸、旋转、位置、整体缩放影响。轻微制造差异不新建。
 - 两个物体都明确属于已有几何类型时，不因尺寸或细长程度拆类，例如不同长宽比例的长方体均为 cuboid。
@@ -222,13 +236,14 @@ PROMPT_CLASSIFY = f"""
 
 【输出格式——严格约束】
 - 只输出一个 JSON 对象：
-  {{"status": "known|remembered|new|uncertain|empty", "color": "英文颜色或null", "shape": "英文形状或历史ID或null", "label_kind": "none|pattern|text|qrcode|barcode", "label_description": "图案描述或null"}}
+  {{"status": "known|remembered|new|uncertain|empty", "color": "英文颜色或null", "shape": "英文形状或历史ID或null", "shape_name": "六字内中文名或null", "label_kind": "none|pattern|text|qrcode|barcode", "label_description": "图案描述或null"}}
 - known：符合已有字典且不匹配历史形状，shape 为字典键。
 - remembered：与某个历史形状的几何结构一致，shape 为提供的精确 ID。
 - new：目标结构清楚、明显不符合字典和所有历史形状，shape=null，必须提供具体几何描述；ID 由程序生成。
 - uncertain：证据不足，shape=null，描述缺少什么证据；不得为了通过格式校验把不确定改成 known/new。
 - empty：仅用于明确无物体。
 - 仅 new/uncertain 必须额外提供字符串字段 shape_description；其他状态省略。
+- new 还必须提供 shape_name（不超过 6 个汉字的中文短名，只用于显示屏，不参与记忆/归类）；known/remembered/uncertain/empty 一律为 null。
 - known/remembered/new 的 color 必须使用颜色字典；uncertain 允许 color=null。
 - label_kind 必须是 none/pattern/text/qrcode/barcode 之一；pattern 时 label_description 必填且不超过 40 字，其余情况为 null。
 - 禁止输出任何解释、分析、Markdown 代码块、前后缀文字。

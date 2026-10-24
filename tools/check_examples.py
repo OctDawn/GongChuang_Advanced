@@ -28,9 +28,17 @@ assert shape_node is not None, "没找到 SHAPE_EXAMPLES"
 examples = eval(compile(ast.Expression(shape_node), "<SHAPE_EXAMPLES>", "eval"), namespace)
 
 const_src = open("shared/const.py", encoding="utf-8").read()
-vocab = ast.literal_eval(
-    next(n.value for n in ast.parse(const_src).body
-         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "SHAPE_CLASSES"))
+const_body = ast.parse(const_src).body
+
+def _const_tuple(name):
+    for node in const_body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == name:
+            return ast.literal_eval(node.value)
+    raise SystemExit(f"shared/const.py 里没找到 {name}")
+
+# 用 LLM 识别词表（= 模型类别 + LLM_SHAPE_EXTRA），不是 RKNN 的类别表：
+# 否则新补的四棱柱/正多面体会被误报成“词表外”。
+vocab = tuple(_const_tuple("SHAPE_CLASSES")) + tuple(_const_tuple("LLM_SHAPE_EXTRA"))
 
 print(f"示例数 = {len(examples)}（词表 {len(vocab)} 类）")
 bad = []

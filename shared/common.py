@@ -340,15 +340,25 @@ SHAPE_DISPLAY_CN = {
     'ball': '球', 'cone': '圆锥', 'cube': '正方体', 'cuboid': '长方体',
     'cylinder': '圆柱', 'cylinder_thinWalled': '薄壁圆柱', 'hemisphere': '半球',
     'parallelepiped': '平行六面体', 'prism3': '三棱柱', 'prism3_thinWalled': '薄壁三棱柱',
-    'prism4_thinWalled': '薄壁四棱柱', 'prism5': '五棱柱', 'prism5_thinWalled': '薄壁五棱柱',
+    'prism4': '四棱柱', 'prism4_thinWalled': '薄壁四棱柱', 'prism5': '五棱柱', 'prism5_thinWalled': '薄壁五棱柱',
     'prism6': '六棱柱', 'prism6_thinWalled': '薄壁六棱柱', 'pyramid3': '三棱锥', 'pyramid4': '四棱锥',
+    'octahedron': '正八面体', 'dodecahedron': '正十二面体', 'icosahedron': '正二十面体',
 }
 
 
-def object_display_name(color_name, shape_name, label=None):
-    """把颜色/形状英文键转成中文显示名，如 blue/prism3 -> 蓝色三棱柱。"""
+def object_display_name(color_name, shape_name, label=None, shape_display=None):
+    """把颜色/形状英文键转成中文显示名，如 blue/prism3 -> 蓝色三棱柱。
+
+    shape_display：词表外形状（unknown_00N）的显示名，由 ShapeMemory.display_name() 提供；
+        为 None 时按词表查。**词表键永远优先**：只有在词表里查不到时才用它。
+    """
     color_cn = COLOR_DISPLAY_CN.get(color_name, str(color_name or "未知颜色"))
-    shape_cn = SHAPE_DISPLAY_CN.get(shape_name, str(shape_name or "未知形状"))
+    if shape_name in SHAPE_DISPLAY_CN:
+        shape_cn = SHAPE_DISPLAY_CN[shape_name]
+    elif shape_display:
+        shape_cn = shape_display
+    else:
+        shape_cn = str(shape_name or "未知形状")
     name = f"{color_cn}{shape_cn}"
     if label:
         name += f"/{label}"
