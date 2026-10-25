@@ -748,6 +748,11 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logger.info(".env 载入 %d 项（已存在的环境变量不覆盖）", DOTENV_COUNT)
+    if ONLINE_MODE:
+        logger.info("线上模式：整盘批量预判（%d 类参考图；取件顺序=列从右到左、同列上到下）",
+                    len(ref_names()))
+    else:
+        logger.info("线下模式：逐件 4 视角识别")
     empty_examples = load_empty_examples()
     shape_examples = load_shape_examples()
     # YOLO_FALLBACK=0：完全不加载 YOLO 回落模型（省启动时间与内存）；
