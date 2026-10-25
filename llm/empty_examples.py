@@ -78,6 +78,15 @@ SHAPE_EXAMPLES = (
              "没有内腔。说明姿态变化不改变形状身份。"},
     {"filename": "black_prism6_lying_bottom.jpg", "color": "black", "shape": "prism6", "view": _BOTTOM,
      "note": "横放状态的仰视。六边形端面与长侧面的交界清楚，没有内腔；交界处那条亮线是棱的高光。"},
+
+    # 横放对照：两者轮廓都是三角形，只能靠“有没有汇聚点”分开（2026-10-25 实测容易混）
+    {"filename": "orange_prism3_top.jpg", "color": "orange", "shape": "prism3", "view": _TOP,
+     "note": "横放的橙色三棱柱。看到的三角形只是**端面**：两个三角形端面彼此平行且全等，中间由矩形侧面连接；"
+             "**没有任何三条以上的棱汇聚到同一个点**，所有棱只分三个方向、同向的互相平行。"},
+    {"filename": "orange_pyramid4_lying_top.jpg", "color": "orange", "shape": "pyramid4",
+     "view": _TOP,
+     "note": "横放的橙色四棱锥。看到的三角形只是一个**侧面**：4 个三角形侧面**全部汇聚到同一个顶点**"
+             "（多条棱在同一处收成一点），底面是四边形。与三棱柱的区别就在有没有这个汇聚点。"},
 )
 
 

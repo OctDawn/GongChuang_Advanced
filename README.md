@@ -645,6 +645,7 @@ python main_push_llm.py
 | `pallet_empty.jpg` | 托盘空场景（阶段 1 查栏用） |
 | `black_prism4_thinwalled_top/bottom.jpg` | 同一件薄壁件的两个视角 |
 | `black_cube_top/bottom.jpg` | 实心对照（与黑色薄壁四棱柱刻意同色） |
+| `orange_prism3_top.jpg` / `orange_pyramid4_lying_top.jpg` | **横放对照**：两者轮廓都是三角形，只能靠“有没有汇聚点”区分（棱锥有多条棱汇于一点，棱柱没有） |
 | … | 实心/薄壁、黑/彩色、竖放/横放均留对照 |
 
 **为什么成对给**：识别区是“同一个物体、多个视角”（① ② 斜上 + ③ 正下 + ④ 平视）。同一件薄壁物体**通常只有一个视角能
