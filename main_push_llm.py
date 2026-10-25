@@ -46,7 +46,7 @@ from shared.const import (
     MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY, STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
     LASER_SENSOR_ON_LEFT,
     SAVE_LLM_RESPONSES, LLM_RESPONSE_DIR,
-    LABEL_CLASSES,
+    LABEL_CLASSES, CAMERA_RECOVER_WAIT,
 )
 from llm.prompt import (
     PROMPT_PALLET_COLUMNS,
@@ -106,7 +106,8 @@ class PushController:
                  display_row_queue,
                  start_requested, column_check_requested, display_requested,
                  stop_event, video_dir, image_dir, run_name, pallet_fps, detect_area_fps,
-                 empty_examples, shape_examples, yolo_fallback, display_wake=None):
+                 empty_examples, shape_examples, yolo_fallback, display_wake=None,
+                 camera_recovering=None):
         self.label_runner = label_runner
         self.yolo_fallback = yolo_fallback
         self.empty_examples = empty_examples
@@ -120,6 +121,9 @@ class PushController:
         self.display_requested = display_requested
         self.display_wake = display_wake   # 亮屏门控：置位后永不清除
         self.stop_event = stop_event
+        # 各路相机的“正在重连”标志（顺序：托盘 + 识别区 1..N）。
+        # 相机线程重连期间置位，主线程据此延长取帧等待，别把重连当故障。
+        self.camera_recovering = list(camera_recovering or [])
 
         self.video_dir = video_dir
         self.image_dir = image_dir
@@ -198,10 +202,38 @@ class PushController:
         self.start_requested.clear()
         return "a"
 
+    def _any_camera_recovering(self):
+        return any(event.is_set() for event in self.camera_recovering)
+
+    def _wait_frame(self, frame_queue, name):
+        """取一帧；若有相机正在重连，最多多等 CAMERA_RECOVER_WAIT 秒再判故障。
+
+        没有这一层，主线程会在 get_frame_retry 的 5 秒后直接 CameraStopped 退出，
+        相机线程的重连就白做了。
+        """
+        deadline = time.monotonic() + CAMERA_RECOVER_WAIT
+        while True:
+            frame = get_frame_retry(frame_queue, self.stop_event, name)
+            if frame is not None:
+                return frame
+            if not self._any_camera_recovering():
+                return None
+            if time.monotonic() >= deadline:
+                logger.error("%s 在相机重连期间等了 %.0f 秒仍无帧，判故障", name, CAMERA_RECOVER_WAIT)
+                return None
+            time.sleep(0.2)
+
     # ---- 阶段 1：查栏 ----
     def check_columns(self):
         self.stage1_round += 1
-        pallet_frame = get_frame_retry(self.pallet_frame_queue, self.stop_event, "托盘摄像头")
+        # 丢掉重连前可能残留的旧帧（队列 maxsize=1，掉线那一刻的画面会留在里面），
+        # 否则重连刚成功就拿到一张掉线前的托盘图。
+        while True:
+            try:
+                self.pallet_frame_queue.get_nowait()
+            except queue.Empty:
+                break
+        pallet_frame = self._wait_frame(self.pallet_frame_queue, "托盘摄像头")
         if pallet_frame is None:
             raise CameraStopped()
 
@@ -271,7 +303,7 @@ class PushController:
                 frame_queue.get_nowait()
             except queue.Empty:
                 break
-        return get_frame_retry(frame_queue, self.stop_event, name)
+        return self._wait_frame(frame_queue, name)
 
     # ---- 阶段 2：四路固定机位一次拍齐 + 单轮历史参考比对 ----
     def run_stage_two(self):
@@ -519,20 +551,28 @@ def _run(empty_examples, shape_examples, fallback):
         logger.error("摄像头初始化失败，程序退出")
         sys.exit(1)
 
+    # 每路相机一个「正在重连」标志：相机线程重连时置位，主线程据此延长取帧等待。
+    pallet_recovering = threading.Event()
+    detect_recovering = [threading.Event() for _ in DETECT_CAMERA_IDS]
+    camera_recovering = [pallet_recovering, *detect_recovering]
+
     large_pallet_camera = threading.Thread(
         target=read_camera,
         args=(large_pallet_cap, "托盘上方广角摄像头", large_pallet_frame_queue,
-              large_pallet_fps_queue, stop_event, False),
+              large_pallet_fps_queue, stop_event, False,
+              CAMERA_PALLET_ID, pallet_recovering),
         daemon=True,
     )
     detect_cameras = [
         threading.Thread(
             target=read_camera,
-            args=(cap, name, frame_queue, fps_queue, stop_event, detect_crop_square),
+            args=(cap, name, frame_queue, fps_queue, stop_event, detect_crop_square,
+                  camera_id, recover_event),
             daemon=True,
         )
-        for cap, name, frame_queue, fps_queue in zip(
-            detect_caps, DETECT_CAMERA_NAMES, detect_frame_queues, detect_fps_queues)
+        for cap, name, frame_queue, fps_queue, camera_id, recover_event in zip(
+            detect_caps, DETECT_CAMERA_NAMES, detect_frame_queues, detect_fps_queues,
+            DETECT_CAMERA_IDS, detect_recovering)
     ]
     serial_worker = threading.Thread(
         target=communicate_serial,
@@ -593,6 +633,7 @@ def _run(empty_examples, shape_examples, fallback):
             stop_event,
             video_dir, image_dir, run_name, pallet_fps, detect_area_fps,
             empty_examples, shape_examples, fallback, display_wake,
+            camera_recovering,
         )
         controller.run()
 

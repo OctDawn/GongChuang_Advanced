@@ -111,6 +111,16 @@ COLUMN_COUNT = 5  # 盘子均分的列数
 # 取帧重试：单次 get_frame 超时 1 秒，连续失败该次数才判定摄像头故障。
 # USB 摄像头偶发卡顿（帧线程被抢占、USB 抖动）不应该让整个流程退出。
 FRAME_RETRY_TIMES = 5
+# ---- 相机掉线自动重连 ----
+# UVC 瞬断在 dmesg 里表现为 USB disconnect + URB -19(ENODEV) / -71(EPROTO)，
+# 实测几秒内会自己重新枚举回来，为此整场重启（5s + 13s 初始化）不划算。
+# 流程：先在同一句柄上原地快试 QUICK_RETRIES×QUICK_INTERVAL，
+#       再按 BACKOFF 逐次重新打开别名；全部失败才判故障退出。
+CAMERA_RECOVER_QUICK_RETRIES = 5
+CAMERA_RECOVER_QUICK_INTERVAL = 0.1
+CAMERA_RECOVER_BACKOFF = (0.3, 0.6, 1.2, 2.4, 5.0)   # 合计约 9.5s
+CAMERA_RECOVER_DISCARD = 3      # 重开后丢弃前几帧（黑帧 / 掉线前的旧帧）
+CAMERA_RECOVER_WAIT = 20.0      # 重连期间主线程最多多等这么久再判故障
 
 # 托盘在画面中的范围（相对图像宽/高的比例，0~1），用于把画面坐标映射到托盘坐标系。
 # 画面与托盘大小/位置不同时，只需修改这里的范围即可。

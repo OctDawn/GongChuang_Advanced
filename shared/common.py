@@ -21,6 +21,8 @@ from shared.const import (
     LASER_SENSOR_ON_LEFT,
     PALLET_LLM_INSET, DETECT_LLM_INSET, FRAME_RETRY_TIMES,
     DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
+    CAMERA_RECOVER_QUICK_RETRIES, CAMERA_RECOVER_QUICK_INTERVAL,
+    CAMERA_RECOVER_BACKOFF, CAMERA_RECOVER_DISCARD,
 )
 
 logger = logging.getLogger("wave.vision")
@@ -189,10 +191,37 @@ def initial_cap(camera_id, camera_name, width, height, fps):
     return cap
 
 
-def read_camera(capture, camera_name, frame_queue, fps_queue, stop_event, crop_square=False):
+def _reopen_capture(camera_id, camera_name, width, height, fps, stop_event):
+    """按别名重新打开相机，成功返回新 cap（已丢弃前几帧），失败返回 None。"""
+    waited = 0.0
+    for attempt, delay in enumerate(CAMERA_RECOVER_BACKOFF, start=1):
+        if stop_event.wait(delay):          # 被要求退出就不重连了
+            return None
+        waited += delay
+        cap = initial_cap(camera_id, camera_name, width, height, fps)
+        if cap is not None and cap.isOpened():
+            logger.warning("%s 重连成功（第 %d 次，累计等待 %.1fs），丢弃前 %d 帧",
+                           camera_name, attempt, waited, CAMERA_RECOVER_DISCARD)
+            for _ in range(CAMERA_RECOVER_DISCARD):
+                cap.read()
+            return cap
+        logger.warning("%s 重连失败（第 %d 次，累计等待 %.1fs）", camera_name, attempt, waited)
+        if cap is not None:
+            cap.release()
+    return None
+
+
+def read_camera(capture, camera_name, frame_queue, fps_queue, stop_event, crop_square=False,
+                camera_id=None, recovering=None):
     """共用采集循环，输出到旧队列或 FrameStream；fps_queue 可为 None。
 
     旧队列故障置位 stop_event；广播故障抛出，由主程序先停推再停止线程。
+
+    camera_id：设备路径（/dev/wave/cam_*）。**只有给出时才自动重连**：读帧失败先原地
+        快试，再按 CAMERA_RECOVER_BACKOFF 重新打开别名（UVC 瞬断实测几秒就回来，
+        不值得为它整场重启）；全部失败才判故障。
+    recovering：可选 threading.Event，重连期间置位。主线程靠它延长取帧等待，
+        否则主线程 5 秒就判 CameraStopped，重连等于白做。
     """
     def report_fps(value):
         if fps_queue is not None:
@@ -200,6 +229,13 @@ def read_camera(capture, camera_name, frame_queue, fps_queue, stop_event, crop_s
                 fps_queue.put_nowait(value)
             except queue.Full:
                 pass
+
+    def set_recovering(flag):
+        if recovering is not None:
+            if flag:
+                recovering.set()
+            else:
+                recovering.clear()
 
     if capture is None or not capture.isOpened():
         logger.error("%s 打开失败，请检查设备", camera_name)
@@ -213,10 +249,41 @@ def read_camera(capture, camera_name, frame_queue, fps_queue, stop_event, crop_s
 
     try:
         report_fps(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        # 重连时按“原来的分辨率/帧率”重开，避免退回到 640×480 默认值
+        open_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
+        open_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
+        open_fps = capture.get(cv2.CAP_PROP_FPS)
+        open_fps = int(open_fps) if np.isfinite(open_fps) and open_fps > 0 else 30
         while not stop_event.is_set():
             ret, frame = capture.read()
             if not ret:
-                raise CameraStopped(f"读取 {camera_name} 帧失败")
+                # ① 原地快试：偶发 URB 抖动通常几十毫秒就恢复，不必重开
+                for quick in range(CAMERA_RECOVER_QUICK_RETRIES):
+                    if stop_event.wait(CAMERA_RECOVER_QUICK_INTERVAL):
+                        return
+                    ret, frame = capture.read()
+                    if ret:
+                        logger.warning("%s 读帧恢复（原地重试第 %d 次）", camera_name, quick + 1)
+                        break
+            if not ret:
+                if camera_id is None:
+                    raise CameraStopped(f"读取 {camera_name} 帧失败")
+                # ② 重新打开别名：UVC 掉线后 udev 符号链不变，重开就能接上
+                logger.error("%s 连续读帧失败，开始重连（最多约 %.1fs）",
+                             camera_name, sum(CAMERA_RECOVER_BACKOFF))
+                report_fps(0.0)
+                set_recovering(True)
+                try:
+                    capture.release()
+                    new_cap = _reopen_capture(camera_id, camera_name,
+                                              open_width, open_height, open_fps, stop_event)
+                finally:
+                    set_recovering(False)
+                if new_cap is None:
+                    raise CameraStopped(f"{camera_name} 重连失败（已尝试 {len(CAMERA_RECOVER_BACKOFF)} 次）")
+                capture = new_cap
+                report_fps(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+                continue
             if crop_square:
                 frame = crop_to_square(frame)
             publish_latest_frame(frame_queue, frame)
