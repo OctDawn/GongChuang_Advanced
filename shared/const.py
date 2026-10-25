@@ -111,6 +111,12 @@ COLUMN_COUNT = 5  # 盘子均分的列数
 # 取帧重试：单次 get_frame 超时 1 秒，连续失败该次数才判定摄像头故障。
 # USB 摄像头偶发卡顿（帧线程被抢占、USB 抖动）不应该让整个流程退出。
 FRAME_RETRY_TIMES = 5
+
+# 线上赛段专用：托盘一次批量预判（6 类参考图）后，按固定取件顺序逐件直接应答，
+# 跳过识别区的 4 视角调用。入口：main_online.py（会自动置 1）；默认 0，不影响线下。
+ONLINE_MODE = os.environ.get("ONLINE_MODE", "0").strip().lower() not in ("0", "false", "no", "off")
+# 批量预判的整次时限（秒）：只发一次请求，可以比 15s 宽一点；失败则自动回退逐件识别。
+ONLINE_BATCH_TIMEOUT = float(os.environ.get("ONLINE_BATCH_TIMEOUT", "40"))
 # ---- 相机掉线自动重连 ----
 # UVC 瞬断在 dmesg 里表现为 USB disconnect + URB -19(ENODEV) / -71(EPROTO)，
 # 实测几秒内会自己重新枚举回来，为此整场重启（5s + 13s 初始化）不划算。

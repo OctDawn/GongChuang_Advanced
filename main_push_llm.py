@@ -46,7 +46,7 @@ from shared.const import (
     MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY, STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
     LASER_SENSOR_ON_LEFT,
     SAVE_LLM_RESPONSES, LLM_RESPONSE_DIR,
-    LABEL_CLASSES, CAMERA_RECOVER_WAIT,
+    LABEL_CLASSES, CAMERA_RECOVER_WAIT, ONLINE_MODE, ONLINE_BATCH_TIMEOUT,
 )
 from llm.prompt import (
     PROMPT_PALLET_COLUMNS,
@@ -54,6 +54,7 @@ from llm.prompt import (
 from llm.qw import qwen_realise, LLMError
 from llm.shape_memory import ShapeMemory
 from llm.shape_recognition import ShapeRecognizer
+from llm.online_batch import classify_pallet, ref_names
 from llm.empty_examples import load_empty_examples, load_shape_examples
 from shared.show import RecognitionRow, run_recognition_display
 from shared.common import (
@@ -124,6 +125,13 @@ class PushController:
         # 各路相机的“正在重连”标志（顺序：托盘 + 识别区 1..N）。
         # 相机线程重连期间置位，主线程据此延长取帧等待，别把重连当故障。
         self.camera_recovering = list(camera_recovering or [])
+        # 线上赛段：整盘预判队列（默认关闭，由 main_online.py 置 ONLINE_MODE=1 开启）
+        self.online_mode = ONLINE_MODE
+        self.online_ready = False
+        self.online_queue = []          # [(cls, name, lane, y), ...] 已按取件顺序排好
+        self.online_pallet = None
+        self.online_tray = None
+        self.online_lane_counts = [0] * COLUMN_COUNT
 
         self.video_dir = video_dir
         self.image_dir = image_dir
@@ -223,6 +231,75 @@ class PushController:
                 return None
             time.sleep(0.2)
 
+    # ---- 线上赛段：整盘一次预判（ONLINE_MODE=1） ----
+    def _online_thumb(self, lane, y):
+        """按栏号 + 纵向位置从托盘图里裁一张缩略图，只用于显示屏。"""
+        if self.online_tray is None:
+            return None
+        height, width = self.online_tray.shape[:2]
+        x0 = int(width * (lane - 1) / float(COLUMN_COUNT))
+        x1 = int(width * lane / float(COLUMN_COUNT))
+        center = int(y * height)
+        half = max(8, int(height * 0.18))
+        y0, y1 = max(0, center - half), min(height, center + half)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return self.online_tray[y0:y1, x0:x1].copy()
+
+    def _online_prepare(self, pallet_frame=None):
+        """托盘一次批量预判，结果按电控取件顺序入队；失败则留空队列（回退逐件）。"""
+        if self.online_ready:
+            return
+        if pallet_frame is None:
+            pallet_frame = self._wait_frame(self.pallet_frame_queue, "托盘摄像头")
+        if pallet_frame is None:
+            raise CameraStopped()
+        self.online_pallet = pallet_frame
+        self.online_tray = crop_pallet_llm(pallet_frame)
+        self.online_ready = True
+        names = ref_names()
+        try:
+            objects = classify_pallet(
+                self.online_tray, total_timeout=ONLINE_BATCH_TIMEOUT,
+                save_path=self._response_path("online") if SAVE_LLM_RESPONSES else None,
+            )
+        except Exception as error:      # 批量失败不能拖垮主流程，退回逐件识别
+            logger.error("线上批量预判失败，回退到逐件 4 视角识别: %s", error)
+            self.online_queue = []
+            return
+        counts = [0] * COLUMN_COUNT
+        queue_items = []
+        for item in objects:
+            lane = item["lane"]
+            counts[lane - 1] += 1
+            cls = item["cls"]
+            queue_items.append((cls, names[cls - 1] if 1 <= cls <= len(names) else "未匹配",
+                                lane, item["y"]))
+        self.online_lane_counts = counts
+        self.online_queue = queue_items
+        logger.info("线上批量预判：%d 件，各栏 %s，前 6 件顺序 %s",
+                    len(queue_items), counts, [entry[0] for entry in queue_items[:6]])
+
+    def _online_stage_two(self):
+        """True = 已由队列应答（跳过识别区）；False = 回退到逐件 4 视角识别。"""
+        if not self.online_ready:
+            self._online_prepare()
+        if not self.online_queue:
+            logger.warning("线上预判队列为空，回退到逐件 4 视角识别")
+            return False
+        cls, name, lane, y = self.online_queue.pop(0)
+        self.pending_display_row = None
+        if cls <= 0:
+            logger.warning("线上预判：第 %d 件未匹配任何类别，回 0（剩余 %d 件）",
+                           self.stage2_round, len(self.online_queue))
+            self.send_queue.put("0\n")
+            return True
+        self.pending_display_row = (cls, name, self._online_thumb(lane, y))
+        self.send_queue.put(f"{cls}\n")
+        logger.info("线上预判结果: %d -> %s（lane=%d y=%.2f，剩余 %d 件）",
+                    cls, name, lane, y, len(self.online_queue))
+        return True
+
     # ---- 阶段 1：查栏 ----
     def check_columns(self):
         self.stage1_round += 1
@@ -245,6 +322,16 @@ class PushController:
         # 裁剪托盘区域后再交给大模型
         tray = crop_pallet_llm(pallet_frame)
         cv2.imwrite(os.path.join(self.image_dir, f"stage1_r{self.stage1_round:03d}_tray.jpg"), tray)
+
+        if self.online_mode:
+            # 整个托盘一次预判，顺便得到各栏占用（替掉原来的查栏 LLM 调用）
+            self._online_prepare(pallet_frame)
+            counts = list(self.online_lane_counts)
+            if not LASER_SENSOR_ON_LEFT:
+                counts.reverse()
+            self.send_queue.put("".join(("1" if count else "0") + "\n" for count in counts))
+            logger.info("查栏（线上批量）: %s", counts)
+            return
 
         save_path = self._response_path("pallet") if SAVE_LLM_RESPONSES else None
         try:
@@ -308,6 +395,8 @@ class PushController:
     # ---- 阶段 2：四路固定机位一次拍齐 + 单轮历史参考比对 ----
     def run_stage_two(self):
         self.stage2_round += 1
+        if self.online_mode and self._online_stage_two():
+            return
         frames = []
 
         # 机械改造：识别区不再旋转，a 一到就从四路各自取「最新一帧」（误差约 1 帧 ≈ 33ms）
@@ -652,7 +741,8 @@ def _run(empty_examples, shape_examples, fallback):
             controller.release_writers()
 
 
-if __name__ == "__main__":
+def main():
+    """程序入口（主入口 main_push_llm.py 与 main_online.py 共用）。"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -668,3 +758,7 @@ if __name__ == "__main__":
     with ExitStack() as models:
         fallback = YoloFallback.load(models) if yolo_fallback_on else None
         _run(empty_examples, shape_examples, fallback)
+
+
+if __name__ == "__main__":
+    main()
