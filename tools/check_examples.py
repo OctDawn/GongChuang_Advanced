@@ -52,11 +52,27 @@ for e in examples:
 
 used = {e["filename"] for e in examples}
 skip = {"pallet_empty.jpg", "empty_top.jpg", "empty_bottom.jpg"}
+
+# 线上赛段另有 6 张类别参考图（只给 ONLINE_MODE 用，不在 SHAPE_EXAMPLES 里）。
+# 不把它们算进来，工具会把它们误报成“孤儿图”。
+online_files = set()
+try:
+    online_src = open("llm/online_batch.py", encoding="utf-8").read()
+    for node in ast.parse(online_src).body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "ONLINE_REFS":
+            online_files = {spec["filename"] for spec in ast.literal_eval(node.value)}
+            break
+except OSError:
+    pass
+used |= online_files
+
 files = {f for f in os.listdir("llm/example") if f.lower().endswith(".jpg")}
 print()
 print("目录里有、但没有被引用的图 :", sorted(files - used - skip) or "无")
 print("被引用、但目录里缺文件     :", sorted(used - files) or "无")
 print("问题项                    :", bad or "无")
+print("线上类别参考图             :", len(online_files), "张，缺失",
+      sorted(online_files - files) or "无")
 
 print()
 print("形状覆盖：")
