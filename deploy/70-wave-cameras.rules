@@ -19,8 +19,11 @@
 # 带宽：每条 480M 总线最多 2 路 MJPG，多一路就 STREAMON 失败（dmesg `URB 0 (-28)`）。
 # 当前分布（5 台相机，2+2+1）：
 #   Bus03 fc880000   ①斜上(1.3) + ③正下(1.4)            2 路
-#   Bus05 xhci  480M 托盘(1.2) + ②斜上(1.1)  [USB3 口 Hub] 2 路
+#   Bus05 xhci  480M 托盘(1.4) + ②斜上(1.3)  [USB3 口 Hub] 2 路
 #   Bus01 fc800000   ④平视(1.2) + 嵌套 Hub(ZTE 网卡)      1 路
+# 2026-10-25：为布线把托盘与②从 Hub 的 1.1/1.2 挪到 1.3/1.4（只换口、不换相机）。
+#   按产品号确认：0bda:3035 = 托盘 → 1.4；0bda:9143 = ② → 1.3。两者 ID_V4L_PRODUCT
+#   都是 "USB Camera"，光看描述符分不开，必须用 ID_MODEL_ID 或看图。
 # 注意：托盘与②共用 USB3 口那个 GenesysLogic Hub，那个 Hub 一掉两台一起没。
 #
 # 换 USB 口后：用
@@ -32,13 +35,13 @@
 #   换启动顺序有可能变；改完记得重启一次确认别名还在。若失效，改用 KERNELS 匹配。
 
 # 托盘上方广角（0bda:3035 / Generic，1280x960）
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.10.auto-usb-0:1.2:1.0", SYMLINK+="wave/cam_pallet"
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.10.auto-usb-0:1.4:1.0", SYMLINK+="wave/cam_pallet"
 
 # 识别区① 斜上方（俯约 45°）
 SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.3:1.0", SYMLINK+="wave/cam_detect_1"
 
 # 识别区② 斜上方（与①相对；0bda:9143 / RYS）
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.10.auto-usb-0:1.1:1.0", SYMLINK+="wave/cam_detect_2"
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.10.auto-usb-0:1.3:1.0", SYMLINK+="wave/cam_detect_2"
 
 # 识别区③ 正下方仰视（看底面）
 SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.4:1.0", SYMLINK+="wave/cam_detect_3"

@@ -29,9 +29,9 @@ CAMERA_PALLET_ID = os.environ.get("CAMERA_PALLET_ID", "/dev/wave/cam_pallet")   
 # 200901010001，by-id 名字直接撞车。换 USB 口只改 udev 规则，代码一行不动。
 # 规则源文件在仓库里：deploy/70-wave-cameras.rules（README「相机与设备别名」同）。
 # 当前绑定（改线后这三处必须一起更新；5 台相机 2+2+1 分散在 3 条 480M 总线上）：
-#   platform-xhci-hcd.10.auto-usb-0:1.2:1.0 → cam_pallet   （托盘广角 0bda:3035）
+#   platform-xhci-hcd.10.auto-usb-0:1.4:1.0 → cam_pallet   （托盘广角 0bda:3035）
 #   platform-fc880000.usb-usb-0:1.3:1.0      → cam_detect_1 （斜上①）
-#   platform-xhci-hcd.10.auto-usb-0:1.1:1.0 → cam_detect_2 （斜上②，0bda:9143/RYS）
+#   platform-xhci-hcd.10.auto-usb-0:1.3:1.0 → cam_detect_2 （斜上②，0bda:9143）
 #   platform-fc880000.usb-usb-0:1.4:1.0      → cam_detect_3 （正下③）
 #   platform-fc800000.usb-usb-0:1.2:1.0      → cam_detect_4 （水平侧视④）
 

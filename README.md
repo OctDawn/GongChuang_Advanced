@@ -35,6 +35,9 @@
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
+**10/25 hrx**
+- 托盘/② 挪到 Hub 1.4/1.3，别名同步
+
 **10/24 hrx**
 - 正多面体按面形状/顶点棱数区分
 - 立方体默认；长方体只认明显长条
@@ -403,8 +406,9 @@ lsusb -t          # ehci-platform 出现几次，就是几条独立 480M
 ```
 
 - **坑**：把“新相机 + 现有相机”接到一个 Hub、再把 Hub 插到已经 2 路的口上 → 那一路变 3 路，必挂。
-- 优先用**空着的 xhci**：Bus06 是 5000M 的 USB3 口，USB2 相机会落在 Bus05 的 480M 侧，
-  而 Bus05 现在只有 ZTE 网卡（几乎不占带宽）——插到 USB3 口是性价比最高的一路。
+- 优先用**空着的 xhci**：Bus06 是 5000M 的 USB3 口，USB2 相机会落在 Bus05 的 480M 侧；
+  Bus05 目前经 GenesysLogic Hub 挂了**托盘 + ②两路**，再加第 3 路必挂——要么换口，要么换总线。
+  （ZTE 4G 网卡挂在 Bus01 的嵌套 Hub 上，不在 Bus05。）
 - 接好后再跑一次 `lsusb -t` 确认每路所在总线，然后拿 ID_PATH：
 
 ```bash
@@ -471,9 +475,9 @@ STAGE_TWO_DETECTION_COUNT=3 python tools/offline_debug.py --latest --runs 3
 
 | 别名 | 机位 | 物理口（`ID_PATH`） | 总线 |
 | --- | --- | --- | --- |
-| `cam_pallet` | 托盘上方广角（0bda:3035，1280×960） | `platform-xhci-hcd.10.auto-usb-0:1.2:1.0` | Bus05（xhci，USB3 口 Hub） |
+| `cam_pallet` | 托盘上方广角（0bda:3035，1280×960） | `platform-xhci-hcd.10.auto-usb-0:1.4:1.0` | Bus05（xhci，USB3 口 Hub） |
 | `cam_detect_1` | 识别区① 斜上方（俯约 45°） | `platform-fc880000.usb-usb-0:1.3:1.0` | Bus03（fc880000） |
-| `cam_detect_2` | 识别区② 斜上方（与①相对，0bda:9143） | `platform-xhci-hcd.10.auto-usb-0:1.1:1.0` | Bus05（xhci，USB3 口 Hub） |
+| `cam_detect_2` | 识别区② 斜上方（与①相对，0bda:9143） | `platform-xhci-hcd.10.auto-usb-0:1.3:1.0` | Bus05（xhci，USB3 口 Hub） |
 | `cam_detect_3` | 识别区③ 正下方仰视（看底面） | `platform-fc880000.usb-usb-0:1.4:1.0` | Bus03（fc880000） |
 | `cam_detect_4` | 识别区④ 水平侧视（补 ①② 死角） | `platform-fc800000.usb-usb-0:1.2:1.0` | Bus01（fc800000） |
 
