@@ -31,13 +31,15 @@ def _class(name, *files):
 
 # 六个类别：列表下标 + 1 = 类别号。换参考图只改这里（文件名必须是 ASCII）。
 # 一个类别可以写多张：同一件物体的不同姿态都算同一类。
+# 2026-10-27：蓝色球 → 橙色正方体（类别 4）、蓝色薄壁圆柱 → 橙色薄壁圆柱（类别 6），
+# 类别号保持不变，机械/电控那边的盒号映射不用改。
 ONLINE_CLASSES = (
     _class("红色正方体", "online_red_cube.jpg"),
     _class("蓝色正方体", "online_blue_cube.jpg"),
     _class("红色球", "online_red_ball.jpg"),
-    _class("蓝色球", "online_blue_ball.jpg"),
+    _class("橙色正方体", "online_orange_cube.jpg"),
     _class("红色薄壁圆柱", "online_red_tube_up.jpg", "online_red_tube_lying.jpg"),
-    _class("蓝色薄壁圆柱", "online_blue_tube_lying.jpg"),
+    _class("橙色薄壁圆柱", "online_orange_tube_lying.jpg"),
 )
 
 if len(ONLINE_CLASSES) > MAX_TEMP_CATEGORIES:
