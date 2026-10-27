@@ -54,7 +54,7 @@ from llm.prompt import (
 from llm.qw import qwen_realise, LLMError
 from llm.shape_memory import ShapeMemory
 from llm.shape_recognition import ShapeRecognizer
-from llm.online_batch import classify_pallet, class_names
+from llm.online_batch import classify_pallet, class_names, assign_box_numbers
 from llm.empty_examples import load_empty_examples, load_shape_examples
 from shared.show import RecognitionRow, run_recognition_display
 from shared.common import (
@@ -270,15 +270,17 @@ class PushController:
         counts = [0] * COLUMN_COUNT
         queue_items = []
         for item in objects:
-            lane = item["lane"]
-            counts[lane - 1] += 1
-            cls = item["cls"]
-            queue_items.append((cls, names[cls - 1] if 1 <= cls <= len(names) else "未匹配",
-                                lane, item["y"]))
+            counts[item["lane"] - 1] += 1
+        # 盒号按首次出现顺序分配（与线下 categorize 一致），不是固定映射
+        assignments, mapping = assign_box_numbers(objects, names)
+        for item, (box, name) in zip(objects, assignments):
+            queue_items.append((box, name, item["lane"], item["y"]))
         self.online_lane_counts = counts
         self.online_queue = queue_items
-        logger.info("线上批量预判：%d 件，各栏 %s，前 6 件顺序 %s",
-                    len(queue_items), counts, [entry[0] for entry in queue_items[:6]])
+        logger.info("线上批量预判：%d 件，各栏 %s", len(queue_items), counts)
+        logger.info("盒号 = 首次出现顺序：%s",
+                    {names[cls - 1]: box for cls, box in sorted(mapping.items(), key=lambda kv: kv[1])})
+        logger.info("前 6 件（盒号）: %s", [entry[0] for entry in queue_items[:6]])
 
     def _online_stage_two(self):
         """True = 已由队列应答（跳过识别区）；False = 回退到逐件 4 视角识别。"""
@@ -287,17 +289,17 @@ class PushController:
         if not self.online_queue:
             logger.warning("线上预判队列为空，回退到逐件 4 视角识别")
             return False
-        cls, name, lane, y = self.online_queue.pop(0)
+        box, name, lane, y = self.online_queue.pop(0)
         self.pending_display_row = None
-        if cls <= 0:
-            logger.warning("线上预判：第 %d 件未匹配任何类别，回 0（剩余 %d 件）",
+        if box <= 0:
+            logger.warning("线上预判：第 %d 件未匹配、或类别已满，回 0（剩余 %d 件）",
                            self.stage2_round, len(self.online_queue))
             self.send_queue.put("0\n")
             return True
-        self.pending_display_row = (cls, name, self._online_thumb(lane, y))
-        self.send_queue.put(f"{cls}\n")
-        logger.info("线上预判结果: %d -> %s（lane=%d y=%.2f，剩余 %d 件）",
-                    cls, name, lane, y, len(self.online_queue))
+        self.pending_display_row = (box, name, self._online_thumb(lane, y))
+        self.send_queue.put(f"{box}\n")
+        logger.info("线上预判结果: 盒 %d <- %s（lane=%d y=%.2f，剩余 %d 件）",
+                    box, name, lane, y, len(self.online_queue))
         return True
 
     # ---- 阶段 1：查栏 ----

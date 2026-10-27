@@ -22,7 +22,7 @@ import cv2  # noqa: E402
 
 from shared.common import crop_pallet_llm  # noqa: E402
 from shared.const import ONLINE_BATCH_TIMEOUT  # noqa: E402
-from llm.online_batch import classify_pallet, class_names  # noqa: E402
+from llm.online_batch import classify_pallet, class_names, assign_box_numbers  # noqa: E402
 
 
 def latest_pallet_image():
@@ -49,11 +49,10 @@ def main():
 
     objects = classify_pallet(tray, total_timeout=ONLINE_BATCH_TIMEOUT)
     names = class_names()
+    assignments, mapping = assign_box_numbers(objects, names)
     print(f"\n共 {len(objects)} 件，按取件顺序（列从右到左，同列上→下）：")
-    for index, item in enumerate(objects, start=1):
-        cls = item["cls"]
-        name = names[cls - 1] if 1 <= cls <= len(names) else "未匹配(回 0)"
-        print(f"  {index:02d}. lane={item['lane']}  y={item['y']:.2f}  ->  类别 {cls} {name}")
+    for index, (item, (box, name)) in enumerate(zip(objects, assignments), start=1):
+        print(f"  {index:02d}. lane={item['lane']}  y={item['y']:.2f}  ->  类别 {item['cls']} {name}  =>  盒 {box}")
 
     counts = [0] * 5
     for item in objects:

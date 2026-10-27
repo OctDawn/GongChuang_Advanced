@@ -92,6 +92,32 @@ def build_refs_prompt(classes):
             "每张只含一件物体，只用于比对颜色与外形，不要照搬背景。")
 
 
+def assign_box_numbers(objects, names, limit=None):
+    """把参考类别按「首次出现顺序」映射成盒号 1..limit（与线下 categorize 同语义）。
+
+    返回 (assignments, mapping)：
+        assignments —— 与 objects 等长的 [(box, name), ...]，box=0 表示未匹配或类别已满
+        mapping     —— {参考类别号: 盒号}，用于打日志核对
+    """
+    limit = MAX_TEMP_CATEGORIES if limit is None else int(limit)
+    mapping = {}
+    assignments = []
+    for item in objects:
+        cls = item["cls"]
+        name = names[cls - 1] if 1 <= cls <= len(names) else "未匹配"
+        if cls <= 0:
+            assignments.append((0, name))
+            continue
+        if cls not in mapping:
+            if len(mapping) >= limit:
+                logger.error("参考类别数超过盒子上限(%d)，类别 %d 回 0", limit, cls)
+                assignments.append((0, name))
+                continue
+            mapping[cls] = len(mapping) + 1
+        assignments.append((mapping[cls], name))
+    return assignments, mapping
+
+
 def parse_objects(value, lane_count=COLUMN_COUNT, class_count=None):
     """校验并排序批量结果；顺序 = 电控取件顺序（列从右到左，同列从上到下）。"""
     class_count = class_count or len(ONLINE_CLASSES)

@@ -36,7 +36,7 @@ from shared.const import (  # noqa: E402
     CAMERA_PALLET_ID, PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     COLUMN_COUNT, ONLINE_BATCH_TIMEOUT,
 )
-from llm.online_batch import classify_pallet, class_names  # noqa: E402
+from llm.online_batch import classify_pallet, class_names, assign_box_numbers  # noqa: E402
 
 
 def grab_pallet(warmup):
@@ -69,19 +69,19 @@ def item_thumb(tray, lane, y):
     return tray[y0:y1, x0:x1].copy()
 
 
-def annotate(tray, objects):
-    """画栏线 + 每件的圆心与"序号:类别"。中文字体 cv2 画不了，所以只用 ASCII。"""
+def annotate(tray, objects, boxes):
+    """画栏线 + 每件的圆心与"序号:盒号"。中文字体 cv2 画不了，所以只用 ASCII。"""
     marked = tray.copy()
     height, width = marked.shape[:2]
     for lane in range(1, COLUMN_COUNT):
         x = int(width * lane / float(COLUMN_COUNT))
         cv2.line(marked, (x, 0), (x, height), (0, 255, 255), 1)
-    for index, item in enumerate(objects, start=1):
+    for index, (item, box) in enumerate(zip(objects, boxes), start=1):
         cx = int(width * (item["lane"] - 0.5) / float(COLUMN_COUNT))
         cy = int(item["y"] * height)
         cv2.circle(marked, (cx, cy), 16, (0, 0, 255), 2)
-        cv2.putText(marked, "%d:%d" % (index, item["cls"]), (cx - 14, cy - 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(marked, "%d:b%d" % (index, box), (cx - 16, cy - 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
     return marked
 
 
@@ -104,26 +104,29 @@ def main():
     seconds = time.time() - started
 
     names = class_names()
+    assignments, mapping = assign_box_numbers(objects, names)
+    boxes = [box for box, _ in assignments]
     print("\n共 %d 件，耗时 %.1f 秒" % (len(objects), seconds))
-    print("  #   lane   y      类别  名称")
-    for index, item in enumerate(objects, start=1):
-        cls = item["cls"]
-        name = names[cls - 1] if 1 <= cls <= len(names) else "未匹配(会回 0)"
-        print("  %-3d %-5d  %-5.2f  %-4s  %s" % (index, item["lane"], item["y"], cls, name))
+    print("  #   lane   y      类别  盒号  名称")
+    for index, (item, (box, name)) in enumerate(zip(objects, assignments), start=1):
+        print("  %-3d %-5d  %-5.2f  %-4d  %-4d  %s" % (index, item["lane"], item["y"],
+                                                      item["cls"], box, name))
 
     counts = [0] * COLUMN_COUNT
     for item in objects:
         counts[item["lane"] - 1] += 1
     occupancy = "".join("1" if count else "0" for count in counts)
-    print("\n取件顺序（类别号）:", [item["cls"] for item in objects])
+    print("\n取件顺序（盒号）:", boxes)
+    print("盒号 = 首次出现顺序:",
+          {names[cls - 1]: box for cls, box in sorted(mapping.items(), key=lambda kv: kv[1])})
     print("各栏件数（1=最左）:", counts)
     print("查栏会回:", occupancy)
 
     if len(objects) != 24:
         print("⚠️ 预期 24 件，实际 %d 件：检查漏检/重复计数" % len(objects))
-    missing = [i for i, item in enumerate(objects, start=1) if item["cls"] == 0]
+    missing = [i for i, box in enumerate(boxes, start=1) if box == 0]
     if missing:
-        print("⚠️ 第 %s 件没匹配到任何类别，会回 0" % missing)
+        print("⚠️ 第 %s 件没匹配到类别（或类别已满），会回 0" % missing)
 
     if args.no_save:
         return
@@ -132,7 +135,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     cv2.imwrite(os.path.join(out_dir, "frame.jpg"), frame)
     cv2.imwrite(os.path.join(out_dir, "tray.jpg"), tray)
-    cv2.imwrite(os.path.join(out_dir, "annotated.jpg"), annotate(tray, objects))
+    cv2.imwrite(os.path.join(out_dir, "annotated.jpg"), annotate(tray, objects, boxes))
     for index, item in enumerate(objects, start=1):
         thumb = item_thumb(tray, item["lane"], item["y"])
         if thumb is not None:
