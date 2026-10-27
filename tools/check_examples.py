@@ -59,8 +59,13 @@ online_files = set()
 try:
     online_src = open("llm/online_batch.py", encoding="utf-8").read()
     for node in ast.parse(online_src).body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "ONLINE_REFS":
-            online_files = {spec["filename"] for spec in ast.literal_eval(node.value)}
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "ONLINE_CLASSES":
+            # ONLINE_CLASSES 里每项是 _class("名称", "file1", "file2", ...)
+            for element in node.value.elts:
+                if isinstance(element, ast.Call):
+                    for arg in element.args[1:]:
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            online_files.add(arg.value)
             break
 except OSError:
     pass

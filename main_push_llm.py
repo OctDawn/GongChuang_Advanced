@@ -54,7 +54,7 @@ from llm.prompt import (
 from llm.qw import qwen_realise, LLMError
 from llm.shape_memory import ShapeMemory
 from llm.shape_recognition import ShapeRecognizer
-from llm.online_batch import classify_pallet, ref_names
+from llm.online_batch import classify_pallet, class_names
 from llm.empty_examples import load_empty_examples, load_shape_examples
 from shared.show import RecognitionRow, run_recognition_display
 from shared.common import (
@@ -257,7 +257,7 @@ class PushController:
         self.online_pallet = pallet_frame
         self.online_tray = crop_pallet_llm(pallet_frame)
         self.online_ready = True
-        names = ref_names()
+        names = class_names()
         try:
             objects = classify_pallet(
                 self.online_tray, total_timeout=ONLINE_BATCH_TIMEOUT,
@@ -750,7 +750,7 @@ def main():
     logger.info(".env 载入 %d 项（已存在的环境变量不覆盖）", DOTENV_COUNT)
     if ONLINE_MODE:
         logger.info("线上模式：整盘批量预判（%d 类参考图；取件顺序=列从右到左、同列上到下）",
-                    len(ref_names()))
+                    len(class_names()))
     else:
         logger.info("线下模式：逐件 4 视角识别")
     empty_examples = load_empty_examples()

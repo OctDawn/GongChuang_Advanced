@@ -22,7 +22,7 @@ import cv2  # noqa: E402
 
 from shared.common import crop_pallet_llm  # noqa: E402
 from shared.const import ONLINE_BATCH_TIMEOUT  # noqa: E402
-from llm.online_batch import classify_pallet, ref_names  # noqa: E402
+from llm.online_batch import classify_pallet, class_names  # noqa: E402
 
 
 def latest_pallet_image():
@@ -48,7 +48,7 @@ def main():
     print(f"图片: {path}  {frame.shape[1]}x{frame.shape[0]} -> 送模型 {tray.shape[1]}x{tray.shape[0]}")
 
     objects = classify_pallet(tray, total_timeout=ONLINE_BATCH_TIMEOUT)
-    names = ref_names()
+    names = class_names()
     print(f"\n共 {len(objects)} 件，按取件顺序（列从右到左，同列上→下）：")
     for index, item in enumerate(objects, start=1):
         cls = item["cls"]
