@@ -853,6 +853,19 @@ DISPLAY=:0 python main_online.py
 
 ### 怎么确认它真的按顺序
 
+**软件端联调（不接电控）**：摆好货，拍一张，直接看顺序和类别：
+
+```bash
+sudo systemctl stop wave-vision-llm
+python tools/online_check.py --tag 第一版
+```
+
+会打印每件的 `lane / y / 类别 / 名称`、取件顺序、各栏件数、查栏会回的 5 位；
+同时把 `annotated.jpg`（栏线 + 序号:类别）存到 `capture/online_check/<时间戳>/`，
+可在 PC 上看图核对“它以为的第几件”和“实际取的第几件”是否一致。
+
+正式跑起来时，日志里每件会打一行：
+
 ```text
 线上批量预判：24 件，各栏 [5, 5, 5, 4, 5]，前 6 件顺序 [3, 1, 2, 6, 4, 5]
 线上预判结果: 3 -> 黑色薄壁五棱柱（lane=5 y=0.12，剩余 23 件）
@@ -1067,6 +1080,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | 脚本 | 用途 |
 | --- | --- |
 | `offline_debug.py` | **离线调参主力**：四路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
+| `online_check.py` | **线上联调**：拍一张托盘图 → 整盘批量识别 → 打印顺序/类别，并保存标注图 |
 | `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
 | `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down/detect_side`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框（跟随 `DETECT_CROP_MODE`） |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |
