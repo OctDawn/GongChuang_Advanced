@@ -292,8 +292,21 @@ class PushController:
         box, name, lane, y = self.online_queue.pop(0)
         self.pending_display_row = None
         if box <= 0:
-            logger.warning("线上预判：第 %d 件未匹配、或类别已满，回 0（剩余 %d 件）",
-                           self.stage2_round, len(self.online_queue))
+            # 未匹配/类别已满：照样回 0，但必须上屏 + 存图，
+            # 否则“24 件却只分桹 23 件”在屏上完全看不出来。
+            self.discarded += 1
+            thumb = self._online_thumb(lane, y)
+            reason = "未匹配" if name == "未匹配" else "类别已满"
+            if thumb is not None:
+                path = os.path.join(self.image_dir,
+                                    f"online_unmatched_{self.stage2_round:03d}_lane{lane}_y{y:.2f}.jpg")
+                cv2.imwrite(path, thumb)
+                logger.warning("未匹配件已存图: %s", path)
+            self.display_row_queue.put(RecognitionRow(
+                index=MAX_TEMP_CATEGORIES + 1, name=f"{name}（{reason}）",
+                image=thumb, total=self.discarded))
+            logger.warning("线上预判：第 %d 件%s，回 0（lane=%d y=%.2f，剩余 %d 件）",
+                           self.stage2_round, reason, lane, y, len(self.online_queue))
             self.send_queue.put("0\n")
             return True
         self.pending_display_row = (box, name, self._online_thumb(lane, y))
