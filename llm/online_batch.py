@@ -40,7 +40,7 @@ ONLINE_CLASSES = (
     _class("蓝色球", "online_blue_ball.jpg"),
     _class("橙色正方体", "online_orange_cube.jpg"),
     _class("红色薄壁圆柱", "online_red_tube_up.jpg", "online_red_tube_lying.jpg"),
-    _class("橙色薄壁圆柱", "online_orange_tube_lying.jpg"),
+    _class("橙色薄壁圆柱", "online_orange_tube_lying.jpg", "online_orange_tube_up.jpg"),
 )
 
 if len(ONLINE_CLASSES) > MAX_TEMP_CATEGORIES:
