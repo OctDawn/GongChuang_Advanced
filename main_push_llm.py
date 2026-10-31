@@ -133,6 +133,7 @@ class PushController:
         self.online_pallet = None
         self.online_tray = None
         self.online_lane_counts = [0] * COLUMN_COUNT
+        self.online_a_attempted = False
         # 线上版2：单目 + 3×3 固定词表（只开 1 路识别区相机）
         self.grid_mode = SINGLE_SHAPE_MODE
 
@@ -250,7 +251,11 @@ class PushController:
         return self.online_tray[y0:y1, x0:x1].copy()
 
     def _online_prepare(self, pallet_frame=None):
-        """托盘一次批量预判，结果按电控取件顺序入队；失败则留空队列（回退逐件）。"""
+        """托盘一次批量预判，结果按电控取件顺序入队。
+
+        托盘为空或请求失败时**不置 online_ready**，这样下一次 `c`（或首个 `a`，
+        限一次）会重试——否则“空盘时先查了一次栏”会把整场批量预判废掉。
+        """
         if self.online_ready:
             return
         if pallet_frame is None:
@@ -259,16 +264,17 @@ class PushController:
             raise CameraStopped()
         self.online_pallet = pallet_frame
         self.online_tray = crop_pallet_llm(pallet_frame)
-        self.online_ready = True
         names = class_names()
         try:
             objects = classify_pallet(
                 self.online_tray, total_timeout=ONLINE_BATCH_TIMEOUT,
                 save_path=self._response_path("online") if SAVE_LLM_RESPONSES else None,
             )
-        except Exception as error:      # 批量失败不能拖垮主流程，退回逐件识别
-            logger.error("线上批量预判失败，回退到逐件 4 视角识别: %s", error)
+        except Exception as error:      # 空盘/请求失败：不拖垮主流程，留空队列
+            logger.error("线上批量预判失败（托盘为空或请求失败），本次不预判: %s", error)
             self.online_queue = []
+            self.online_lane_counts = [0] * COLUMN_COUNT
+            self.online_ready = False   # 允许下次 c 重试
             return
         counts = [0] * COLUMN_COUNT
         queue_items = []
@@ -280,6 +286,7 @@ class PushController:
             queue_items.append((box, name, item["lane"], item["y"]))
         self.online_lane_counts = counts
         self.online_queue = queue_items
+        self.online_ready = True
         logger.info("线上批量预判：%d 件，各栏 %s", len(queue_items), counts)
         logger.info("盒号 = 首次出现顺序：%s",
                     {names[cls - 1]: box for cls, box in sorted(mapping.items(), key=lambda kv: kv[1])})
@@ -288,6 +295,12 @@ class PushController:
     def _online_stage_two(self):
         """True = 已由队列应答（跳过识别区）；False = 回退到逐件 4 视角识别。"""
         if not self.online_ready:
+            # 没收到 c（或 c 时托盘还空着）：只给首个 a 一次补做预判的机会，
+            # 免得网络持续异常时每个 a 都白等 40 秒。
+            if self.online_a_attempted:
+                logger.warning("线上预判不可用，回退到逐件 4 视角识别")
+                return False
+            self.online_a_attempted = True
             self._online_prepare()
         if not self.online_queue:
             logger.warning("线上预判队列为空，回退到逐件 4 视角识别")
@@ -342,13 +355,20 @@ class PushController:
         cv2.imwrite(os.path.join(self.image_dir, f"stage1_r{self.stage1_round:03d}_tray.jpg"), tray)
 
         if self.online_mode:
-            # 整个托盘一次预判，顺便得到各栏占用（替掉原来的查栏 LLM 调用）
+            # 整个托盘一次预判，顺便得到各栏占用（替掉原来的查栏 LLM 调用）。
+            # 托盘为空时预判会失败：按“查不到”回全 0，且不缓存结果，下次 c 重试，
+            # 否则开赛前先查一次栏会把整场批量预判废掉。
             self._online_prepare(pallet_frame)
-            counts = list(self.online_lane_counts)
+            if self.online_queue:
+                counts = list(self.online_lane_counts)
+                note = ""
+            else:
+                counts = [0] * COLUMN_COUNT
+                note = "（未预判成功，下次 c 重试）"
             if not LASER_SENSOR_ON_LEFT:
                 counts.reverse()
             self.send_queue.put("".join(("1" if count else "0") + "\n" for count in counts))
-            logger.info("查栏（线上批量）: %s", counts)
+            logger.info("查栏（线上批量）: %s%s", counts, note)
             return
 
         save_path = self._response_path("pallet") if SAVE_LLM_RESPONSES else None

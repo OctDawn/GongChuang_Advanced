@@ -906,7 +906,8 @@ DISPLAY=:0 python main_online2.py
 ```
 
 入口会强制 `ONLINE_MODE=0`、`SINGLE_SHAPE_MODE=1`、`STAGE_TWO_DETECTION_COUNT=1`
-（只开 `cam_detect_1`，其余三路不占带宽）。串口/显示/盒号分配与线下完全一致。
+（只开 `cam_detect_1`，其余三路不占带宽）。串口/显示/盒号分配与线下完全一致，
+**`c` 查栏照旧可用**（仍然走托盘相机 + 五栏占用，与单目识别互不影响）。
 
 | | 线下 | 线上版1 | 线上版2 |
 | --- | --- | --- | --- |
