@@ -28,18 +28,21 @@ except Exception:  # noqa: BLE001
 
 
 BLACK = (0, 0, 0)          # 待机（还没收到 a/c）时的纯黑底
-BACKGROUND = (17, 24, 39)
-HEADER_BACKGROUND = (30, 41, 59)
-ROW_BACKGROUND = (248, 250, 252)
-ALTERNATE_ROW_BACKGROUND = (235, 241, 247)
-GRID_COLOR = (100, 116, 139)
-TEXT_COLOR = (15, 23, 42)
+BACKGROUND = (255, 255, 255)          # 表体：纯白（对齐赛项示例）
+HEADER_BACKGROUND = (255, 255, 255)   # 表头：纯白
+ROW_BACKGROUND = (255, 255, 255)      # 行底：纯白
+ALTERNATE_ROW_BACKGROUND = (255, 255, 255)  # 不画斑马纹，与奇数行同色
+GRID_COLOR = (0, 0, 0)                # 表格线：纯黑
+TEXT_COLOR = (0, 0, 0)                # 表内文字：纯黑
 MUTED_TEXT_COLOR = (100, 116, 139)
-TITLE_COLOR = (241, 245, 249)
+TITLE_COLOR = (0, 0, 0)               # 标题：纯黑（白底黑字）
 
 # 以 720p 为基准的字号，实际按屏幕高度等比放大；整体偏小，保证单元格内显示完整
 BASE_TITLE_FONT = 30
 BASE_HEADER_FONT = 24
+# 赛项示例的表格只有 6 行类别，没有末行「未归类」。
+# 置 True 可恢复旧行为（被丢弃的货物在上屏留痕）。
+SHOW_UNCATEGORIZED_ROW = False
 BASE_BODY_FONT = 22
 
 # 文字列宽度比例：序号 / 货物名称 / 分拣成功总数量（和 = 1.0，按「除图片列以外的宽度」分配）。
@@ -196,14 +199,14 @@ def _draw_table(screen, rows, fonts, row_count):
         rect = pygame.Rect(x, table_top, cw, header_h)
         pygame.draw.rect(screen, HEADER_BACKGROUND, rect)
         pygame.draw.rect(screen, GRID_COLOR, rect, 1)
-        _draw_centered_text(screen, header_font, heading, TITLE_COLOR, rect)
+        _draw_centered_text(screen, header_font, heading, TEXT_COLOR, rect)
         x += cw
 
     for i in range(row_count):
         y = table_top + header_h + i * row_h
         row = rows[i] if i < len(rows) else None
         background = ROW_BACKGROUND if i % 2 == 0 else ALTERNATE_ROW_BACKGROUND
-        if i == row_count - 1:
+        if SHOW_UNCATEGORIZED_ROW and i == row_count - 1:
             # 末行「未归类」：留痕类别已满 / 储物盒已满而被丢弃的货物
             values = ("未归类", row.name if row else "", None,
                       str(row.total) if row else "0")
@@ -262,7 +265,7 @@ def run_recognition_display(row_queue, stop_event, stop_on_exit=False,
     gate_events 为空（默认）= 老行为：一启动就画表格。
     """
 
-    rows = [None] * (MAX_TEMP_CATEGORIES + 1)
+    rows = [None] * MAX_TEMP_CATEGORIES
 
     # 这块板子的 rockchip GL 驱动加载失败（日志里的 "glx: failed to create dri3 screen" /
     # "failed to load driver: rockchip"），SDL 自动挑到的 visual/renderer 会把画面渲染成
@@ -293,8 +296,8 @@ def run_recognition_display(row_queue, stop_event, stop_on_exit=False,
             _load_font(int(BASE_BODY_FONT * scale)),
         )
 
-        # 每个类别始终占一行，最后一行固定为「未归类」，不随屏幕分辨率改变。
-        row_count = MAX_TEMP_CATEGORIES + 1
+        # 6 行全部是类别行（不随屏幕分辨率改变）；按赛项示例不显示末行「未归类」。
+        row_count = MAX_TEMP_CATEGORIES
 
         clock = pygame.time.Clock()
         screen_configure()  # 关屏保 / 关自动休眠，避免比赛中途自己黑屏
