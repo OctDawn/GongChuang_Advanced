@@ -35,6 +35,9 @@
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
+**10/31 hrx**
+- 新增线上版2：单目 3 色 × 3 形
+
 **10/25 hrx**
 - 新增线上入口：整盘批量预判
 - 相机掉线自动重连（不整场重启）
@@ -210,7 +213,8 @@
 ```text
 GongChuang_Advanced/
 ├── main_push_llm.py             # 主入口（线下）：串口协议 + 阶段编排 + 逐件 4 视角识别
-├── main_online.py               # 线上赛段入口：整盘批量预判 + 固定取件顺序
+├── main_online.py               # 线上版1：整盘批量预判 + 固定取件顺序
+├── main_online2.py              # 线上版2：单目 3 色 × 3 形（只开 1 路识别区相机）
 ├── test_llm.py                  # 离线测试（PC 上喂图片，不碰硬件）
 ├── requirements.txt
 ├── .gitattributes               # 全仓 LF（.sh 必须 LF，否则板上报 'bash\r'）
@@ -220,7 +224,8 @@ GongChuang_Advanced/
 │   ├── prompt.py                # 词表、提示词、纠错提示
 │   ├── shape_recognition.py     # 多机位识别、校验、形状登记（机位数随常量）
 │   ├── shape_memory.py          # 本次运行的形状参考图库（N 视角拼图，默认 4）
-│   ├── online_batch.py          # 线上：6 类参考图 + 整盘一次识别（按取件顺序排序）
+│   ├── online_batch.py          # 线上版1：6 类参考图 + 整盘一次识别（按取件顺序排序）
+│   ├── grid_recognition.py      # 线上版2：单目 3 色 × 3 形固定词表（9 类）
 │   ├── empty_examples.py        # 空场景图与带标签示例加载
 │   └── example/                 # 3 张空场景（托盘/顶部/底部）+ 11 张形状示例（顶部/底部成对）
 ├── yolo/                        # 本地 NPU 层（LLM 版按需使用）
@@ -891,6 +896,50 @@ python tools/online_check.py --tag 第一版
 
 ---
 
+## 线上版2（单目 3 色 × 3 形）
+
+物体推到识别区、只开 **1 路**相机逐件识别：比版1 稳（取景大、光照稳），比线下快（1 张图、几十 token）。
+
+```bash
+sudo systemctl stop wave-vision-llm
+DISPLAY=:0 python main_online2.py
+```
+
+入口会强制 `ONLINE_MODE=0`、`SINGLE_SHAPE_MODE=1`、`STAGE_TWO_DETECTION_COUNT=1`
+（只开 `cam_detect_1`，其余三路不占带宽）。串口/显示/盒号分配与线下完全一致。
+
+| | 线下 | 线上版1 | 线上版2 |
+| --- | --- | --- | --- |
+| 输入 | 4 视角 | 1 张托盘俯视 | **1 视角** |
+| 判别方式 | 词表 + 形状记忆 | 6 张参考图比对 | **3 色 × 3 形固定词表** |
+| 单件耗时 | 4~6s | 首个 `c` 5~9s，之后 0.1s | ~1.5~3s |
+| 贴纸 | 参与分类 | 忽略 | **忽略** |
+
+### 判别范围（9 类，取其中 6 类）
+
+`red / orange / blue` × `cube / ball / cylinder_thinWalled`
+
+模型只返回这三个颜色与三种形状，校验器会拒绝词表外取值；同时容忍
+`cylinder` / `tube` / `sphere` / 中文名 / 大小写与空格等写法（统一归一）。
+
+### 盒号
+
+与另外两个入口一致：**按首次出现顺序**分配 1..6，第 7 个新类别回 `0`。
+
+### 单目自检（不接电控）
+
+```bash
+python tools/grid_check.py --tag 红正方体
+```
+
+会打印颜色/形状/耗时，并把 `frame.jpg`、`sent.jpg`（真正送模型的那张）存到
+`capture/grid_check/<时间戳>/`，方便核对裁剪和取景。
+
+> ⚠️ 用 systemd 起时，`start_vision.sh` 按 `.env` 的 `STAGE_TWO_DETECTION_COUNT`
+> 等相机别名；届时要把该值也写成 `1`，否则门禁会等四路。手动跑本入口不受影响。
+
+---
+
 ## 部署与运行
 
 ### 服务与包装
@@ -1090,7 +1139,8 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | 脚本 | 用途 |
 | --- | --- |
 | `offline_debug.py` | **离线调参主力**：四路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
-| `online_check.py` | **线上联调**：拍一张托盘图 → 整盘批量识别 → 打印顺序/类别，并保存标注图 |
+| `online_check.py` | **线上版1 联调**：拍一张托盘图 → 整盘批量识别 → 打印顺序/类别，并保存标注图 |
+| `grid_check.py` | **线上版2 联调**：拍一张识别区图 → 判断颜色+形状（3×3），保存原图/送图/结果 |
 | `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
 | `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down/detect_side`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框（跟随 `DETECT_CROP_MODE`） |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |

@@ -46,7 +46,7 @@ from shared.const import (
     MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY, STAGE_TWO_DETECTION_COUNT, COLUMN_COUNT,
     LASER_SENSOR_ON_LEFT,
     SAVE_LLM_RESPONSES, LLM_RESPONSE_DIR,
-    LABEL_CLASSES, CAMERA_RECOVER_WAIT, ONLINE_MODE, ONLINE_BATCH_TIMEOUT,
+    LABEL_CLASSES, CAMERA_RECOVER_WAIT, ONLINE_MODE, ONLINE_BATCH_TIMEOUT, SINGLE_SHAPE_MODE,
 )
 from llm.prompt import (
     PROMPT_PALLET_COLUMNS,
@@ -55,11 +55,12 @@ from llm.qw import qwen_realise, LLMError
 from llm.shape_memory import ShapeMemory
 from llm.shape_recognition import ShapeRecognizer
 from llm.online_batch import classify_pallet, class_names, assign_box_numbers
+from llm.grid_recognition import classify_grid
 from llm.empty_examples import load_empty_examples, load_shape_examples
 from shared.show import RecognitionRow, run_recognition_display
 from shared.common import (
     CameraStopped, get_frame, get_frame_retry, wait_event,
-    initial_cap, crop_pallet_llm, read_camera, communicate_serial, categorize,
+    initial_cap, crop_pallet_llm, crop_detect_llm, read_camera, communicate_serial, categorize,
     category_is_full, object_display_name, sticker_decode_enabled,
 )
 from yolo.decoder import decode_sticker, crop_box
@@ -132,6 +133,8 @@ class PushController:
         self.online_pallet = None
         self.online_tray = None
         self.online_lane_counts = [0] * COLUMN_COUNT
+        # 线上版2：单目 + 3×3 固定词表（只开 1 路识别区相机）
+        self.grid_mode = SINGLE_SHAPE_MODE
 
         self.video_dir = video_dir
         self.image_dir = image_dir
@@ -434,7 +437,52 @@ class PushController:
 
         self._finalize_stage_two(frames)
 
+    def _finalize_grid(self, frames):
+        """线上版2：单目 3 色 × 3 形；不碰形状记忆，贴纸当干扰。"""
+        try:
+            # 与四视角路径一致：先做 crop_detect_llm（full 模式等比缩到长边上限，square 模式内缩）
+            view = crop_detect_llm(frames[0])
+            result = classify_grid(
+                view, total_timeout=LLM_FALLBACK_TIMEOUT,
+                save_path=self._response_path("grid") if SAVE_LLM_RESPONSES else None,
+            )
+        except LLMError as error:
+            logger.error("单目识别失败，本轮回 0: %s", error)
+            self._check_running()
+            self.send_queue.put("0\n")
+            return
+        self._check_running()
+        status = result["status"]
+        if status == "empty":
+            logger.info("单目识别：画面无物体")
+            self.pending_display_row = None
+            self.send_queue.put("0\n")
+            return
+        if status == "uncertain" or not result["color"] or not result["shape"]:
+            logger.warning("单目识别：证据不足（%s），回 0", result.get("reason") or "")
+            self.pending_display_row = None
+            self.send_queue.put("0\n")
+            return
+
+        color, shape = result["color"], result["shape"]
+        category = categorize(color, shape, None)
+        if category == 0:
+            logger.error("单目识别：类别已满，回 0")
+            self._show_discarded(color, shape, None, frames, "类别已满")
+            return
+        if category_is_full(self.recognition_counts, category):
+            logger.error("单目识别：储物盒 %d 已满，回 0", category)
+            self._show_discarded(color, shape, None, frames, "储物盒已满")
+            return
+        name = self._object_name(color, shape, None)
+        self.pending_display_row = (category, name, frames[0].copy())
+        self.send_queue.put(f"{category}\n")
+        logger.info("单目识别结果: color=%s shape=%s -> 盒 %d %s", color, shape, category, name)
+
     def _finalize_stage_two(self, frames):
+        if self.grid_mode:
+            self._finalize_grid(frames)
+            return
         self.pending_display_row = None
         try:
             color, shape, label_kind, label_description = self.shape_recognizer.classify(
@@ -763,11 +811,15 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logger.info(".env 载入 %d 项（已存在的环境变量不覆盖）", DOTENV_COUNT)
+    if ONLINE_MODE and SINGLE_SHAPE_MODE:
+        logger.warning("ONLINE_MODE 与 SINGLE_SHAPE_MODE 同时为 1：按整盘预判处理，请检查入口")
     if ONLINE_MODE:
         logger.info("线上模式：整盘批量预判（%d 类参考图；取件顺序=列从右到左、同列上到下）",
                     len(class_names()))
+    elif SINGLE_SHAPE_MODE:
+        logger.info("线上版2：单目 3 色 × 3 形（识别区 %d 路相机）", STAGE_TWO_DETECTION_COUNT)
     else:
-        logger.info("线下模式：逐件 4 视角识别")
+        logger.info("线下模式：逐件 %d 视角识别", STAGE_TWO_DETECTION_COUNT)
     empty_examples = load_empty_examples()
     shape_examples = load_shape_examples()
     # YOLO_FALLBACK=0：完全不加载 YOLO 回落模型（省启动时间与内存）；

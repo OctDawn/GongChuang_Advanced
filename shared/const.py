@@ -117,6 +117,9 @@ FRAME_RETRY_TIMES = 5
 ONLINE_MODE = os.environ.get("ONLINE_MODE", "0").strip().lower() not in ("0", "false", "no", "off")
 # 批量预判的整次时限（秒）：只发一次请求，可以比 15s 宽一点；失败则自动回退逐件识别。
 ONLINE_BATCH_TIMEOUT = float(os.environ.get("ONLINE_BATCH_TIMEOUT", "40"))
+# 线上版2：单目 + 3 色 × 3 形固定词表（9 类）。入口 main_online2.py 自动置 1。
+# 与 ONLINE_MODE 互斥（两个入口各自强制自己的开关），默认 0。
+SINGLE_SHAPE_MODE = os.environ.get("SINGLE_SHAPE_MODE", "0").strip().lower() not in ("0", "false", "no", "off")
 # ---- 相机掉线自动重连 ----
 # UVC 瞬断在 dmesg 里表现为 USB disconnect + URB -19(ENODEV) / -71(EPROTO)，
 # 实测几秒内会自己重新枚举回来，为此整场重启（5s + 13s 初始化）不划算。
