@@ -549,7 +549,14 @@ def _qwen_realise(images, prompt, message_save_path=None, validator=None, deadli
                 logger.error("LLM 鉴权/权限失败，停止重试: %s", e)
                 break
             if LLM_CACHE_MODE == "openai_explicit" and getattr(e, "status_code", None) == 400:
-                logger.error("显式缓存请求被拒绝；请核对模型/端点支持，或设置 LLM_CACHE_MODE=portable")
+                # 400 不等于“缓存不支持”：reasoning/service_tier/参数不支持也是 400。
+                # 之前统查本提示，导致用户拿着错误信息去改缓存模式。
+                detail = str(e)
+                if "cache" in detail.lower():
+                    logger.error("显式缓存请求被拒绝；请核对模型/端点支持，或设置 LLM_CACHE_MODE=portable")
+                else:
+                    logger.error("上游拒绝请求(400)，请核查模型/参数（reasoning、service_tier、图片格式）: %s",
+                                 detail)
                 break
             if _is_connection_error(e):
                 # 现场最常见的故障就是这一类（代理/节点瞬断）：先把整个连接池丢掉再重试，
