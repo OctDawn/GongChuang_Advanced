@@ -288,6 +288,51 @@ GongChuang_Advanced/
 > 图4 = ④水平侧视（机位数 = `STAGE_TWO_DETECTION_COUNT`）。四台相机装错位置会让模型按错误的
 > 视角关系推理（见「换 USB 口 / 换相机后怎么做」）。
 
+### 多模型链（OpenAI → 千问 → YOLO）
+
+默认是单 provider（`llm/qw.py` 直连 `DASHSCOPE_*`）。配置 `LLM_CHAIN` 后切换成链式：
+
+```
+LLM_CHAIN=openai,qwen
+```
+
+**不是每件货都串两家**——那样 15 秒必超。链只在两处生效：
+
+1. **启动探测**（`tools/llm_probe.py` 或预热时自动做）：逐家发一条 `ping`，
+   不通的直接进入长时间冷却（`LLM_PROBE_COOLDOWN`，默认 3600s ≈ 整场），
+   所以「现场没有代理」只在开头上付一次代价，不会每件货都白等一个 5 秒连接超时。
+   运行期才失败的家则按 60s → 120s → 240s 指数退避（封顶 900s）。
+2. **运行期切家**：只对「换一家可能就好」的错误切换。
+
+| 错误 | 处理 |
+|---|---|
+| 连接失败 / 超时 / 401 / 403 | 标记冷却，切下一家（本件用新家重发） |
+| 5xx、400 参数或模型错误 | 切下一家 |
+| JSON 非法 / 词表校验失败 | **留在同一家**带纠错提示重试（换家不会让格式变好） |
+| 同一家重试后仍不合格 | 切下一家（换模型可能命名不同） |
+| `uncertain` / `empty` | 不切（模型看清楚了，只是判不了） |
+| 全部失败 / 预算不足 | 抛 `LLMError`，交给 YOLO 兜底（需 `YOLO_FALLBACK=1`） |
+
+每家自己的配置（key / base_url / model / cache_mode / proxy / timeout）用
+`LLM_<NAME>_` 前缀，示例见 `.env.example`。**代理是 per-provider 的**：
+OpenAI 走 `LLM_OPENAI_PROXY=http://127.0.0.1:7890`，千问写
+`LLM_QWEN_PROXY=direct` 强制直连——这样梯子倒了也只影响 OpenAI，千问不受牵连。
+
+预算关系：整件总预算 `LLM_FALLBACK_TIMEOUT`（线下建议 10~11s）>
+单家 `LLM_<NAME>_TIMEOUT`（OpenAI 6s / 千问 5s）>
+切家门槛 `LLM_MIN_PROVIDER_BUDGET`（默认 2s，剩余不足就不切了，直接给 YOLO）。
+
+自检：
+
+```bash
+python tools/llm_probe.py                              # 只发 ping
+python tools/llm_probe.py --image 某图.jpg              # 再发一次真实图片请求
+```
+
+代码位置：`llm/providers.py`（配置与冷却）、`llm/chain.py`（请求与切家），
+`llm/qw.py` 只在 `qwen_realise()` / `warm_up()` 入口处转发；**未配置
+`LLM_CHAIN` 时这两处直接 return，走改造前的原路径**，所以单家模式行为不变。
+
 ### 显示屏
 
 - 固定 6 行：6 个类别（已按赛项示例去掉末行「未归类」；纯白底、纯黑字、纯黑表格线）。

@@ -72,6 +72,15 @@ class LLMDeadlineExceeded(LLMError):
     """整次识别已过期，调用方不得再发送该轮结果。"""
 
 
+def _chain_enabled():
+    """是否启用多 provider 链（LLM_CHAIN）。未配置时走本文件原来的单 provider 路径。"""
+    try:
+        from llm.providers import configured
+        return configured()
+    except Exception:  # noqa: BLE001 —— 链配置有问题也不能连黑主流程
+        return False
+
+
 def _load_dotenv():
     """极简 .env 读取（不引入额外依赖），已存在的环境变量优先。"""
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
@@ -340,6 +349,10 @@ def _save_response(path, content, attempt):
 def qwen_realise(images, prompt, message_save_path=None, validator=None, total_timeout=None,
                  *, prefix_sections=()):
     """可选整次调用时限（包含编码及重试）；到期丢弃后台迟到结果。"""
+    if _chain_enabled():
+        from llm.chain import realise as _chain_realise
+        return _chain_realise(images, prompt, message_save_path, validator, total_timeout,
+                              prefix_sections=prefix_sections)
     if total_timeout is None:
         return _qwen_realise(images, prompt, message_save_path, validator,
                             prefix_sections=prefix_sections)
@@ -607,6 +620,9 @@ def warm_up(prefix_sections=(), prompt=WARMUP_PROMPT):
     任何异常都只记 warning 并返回 None：预热绝不能影响主流程，也不能占用
     LLM_FALLBACK_TIMEOUT 的预算。返回耗时秒数，关闭/失败返回 None。
     """
+    if _chain_enabled():
+        from llm.chain import warm_up as _chain_warm_up
+        return _chain_warm_up(prefix_sections, prompt)
     if not LLM_WARMUP:
         logger.info("LLM 预热已关闭（LLM_WARMUP=0）")
         return None
