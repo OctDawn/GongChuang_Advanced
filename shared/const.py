@@ -103,7 +103,7 @@ STABLE_TIMES = 5
 
 CONTAIN_THRESHOLD = 0.8
 MAX_TEMP_CATEGORIES = 6
-MAX_ITEMS_PER_CATEGORY = 16  # 每盒最多 16 件（同一类别可放的上限；当前只有 main_push_llm.py 在用）
+MAX_ITEMS_PER_CATEGORY = 4   # 每盒最多 4 件（赛规：单个储物盒不得超 4 件）；超出时该件回 0
 
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
