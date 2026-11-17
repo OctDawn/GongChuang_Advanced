@@ -1236,8 +1236,8 @@ python tools/check_examples.py                      # 示例图自检
   每次空盘多花 3.6~4.2 秒。修法一行：`status=="empty"` 时把 `"none"`/`"null"`/`None` 都当合法（尚未改）。
 - **矮框（推料夹具）的 prompt 规则待补**：需要先有「带框的空场景图」`empty_top/bottom`，再改判据；
   现在拷图补上去容易把夹具当成物件。
-- **`MAX_ITEMS_PER_CATEGORY = 16`** 与赛规「每盒不超过 4 件」不一致，待确认后修改。
-- `llm/pallet_monitor.py` 全项目零引用（早期 agent 方案残留），可直接删。
+- ~~`MAX_ITEMS_PER_CATEGORY = 16` 与赛规「每盒不超过 4 件」不一致~~ → **已改为 4**（2026-11-17）。
+- ~~`llm/pallet_monitor.py` 全项目零引用~~ → **已删除**（2026-11-17）。
 - `shared/common.py` 的 `FrameStream` 类无人实例化（死代码），清理需动 `read_camera` 的错误分支，暂缓。
 - 赛后轮换两把 key：本项目的 LLM key（曾在聊天/`journalctl` 露过明文）、队友的 VolcEngine Ark key
   （团队仓库历史里有）。
