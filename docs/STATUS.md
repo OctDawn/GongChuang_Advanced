@@ -117,7 +117,10 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 - `.env` 重复键：两个加载器都是「先到先得」，重复键会让实际生效值不可预测。改完跑
   `sort .env | grep -vE "^\s*#" | cut -d= -f1 | uniq -d`，必须为空。
 - `mihomo` 是唯一代理出口：配置错误会导致全局断网。改它必须「备份 → 改 → `mihomo -t` → 重启」。
-- 4G 模组 `enx889e96529263`：已被 NetworkManager 标为 `unmanaged`（`/etc/NetworkManager/conf.d/99-ignore-4g.conf`）。
-  它的链路不可用且会抢默认路由，**不要启用**。
+- 4G 模组 `enx889e96529263`：已被 NetworkManager 标为 `unmanaged`（`/etc/NetworkManager/conf.d/99-ignore-4g.conf`），**不要启用**。
+  2026-11-18 实测：撤销 unmanaged 后它能拨号（192.168.0.245、能 ping 通），但启用的 3 分钟里
+  `Bus 03 / Port 3` 的识别区相机反复重枚举 8 次（设备号涨到 16，`usb 3-1.3: USB disconnect`），
+  4G 与它不在同一控制器 → 判定为 **5V 供电被拉塌**，不是带宽问题；回退后计数不再增长。
+  若确实需要备用：必须给模组**独立供电**（带外接电源的 USB hub），不要赌 USB3 口。
 - 手电筒/点光源直射会让高反光件（球）过曝，模型会如实回 `uncertain` → 回 0。
 - 线上版2 的历史图不能代表线下四视角难度。
