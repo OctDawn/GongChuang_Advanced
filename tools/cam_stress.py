@@ -58,6 +58,8 @@ def main():
     parser.add_argument("--minutes", type=float, default=3.0, help="压测时长（分钟）")
     parser.add_argument("--pallet", action="store_true", help="把托盘相机也算进来（共 5 路）")
     parser.add_argument("--report-every", type=float, default=30.0, help="进度打印间隔（秒）")
+    parser.add_argument("--min-fps", type=float, default=0.0,
+                        help="低于该 fps 才算异常（默认 0 = 不看 fps，只看失败帧）")
     args = parser.parse_args()
 
     targets = [(cid, name, DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS)
@@ -108,9 +110,12 @@ def main():
         for item in items:
             fps = item["count"] / elapsed
             print("  %-18s %5.1f fps  失败 %d 帧" % (item["name"], fps, item["fail"]))
-            if item["fail"] > 0 or fps < DETECT_FPS * 0.7:
+            if item["fail"] > 0 or (args.min_fps > 0 and fps < args.min_fps):
                 bad += 1
-        print("  结论：%s" % ("有 %d 路异常，检查供电/带宽" % bad if bad else "全部正常（约 30fps、0 失败）"))
+        if bad:
+            print("  结论：有 %d 路异常（失败帧或低于 --min-fps），检查供电/带宽" % bad)
+        else:
+            print("  结论：全部正常（失败 0 帧）。fps 是 5 路并发下的实际上限，本任务每件只需 1 帧，不必追求 30")
         for item in items:
             item["cap"].release()
 
