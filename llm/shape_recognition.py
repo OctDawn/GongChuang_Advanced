@@ -15,6 +15,19 @@ from shared.const import LASER_LLM_TIMEOUT, LASER_QUICK_TIMEOUT
 logger = logging.getLogger("wave.vision")
 
 
+def _is_null(value):
+    """把模型写出来的各种“空”当成 null 处理。
+
+    实测空盘时模型常回 label_kind: "none" / "null" 而不是 JSON 的 null，
+    旧逻辑只认 None 会判失败并触发一次无意义的纠错重试（空盘多花 3.6~4.2 秒）。
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ("", "null", "none", "~")
+    return False
+
+
 def parse_classify_result(result, records=()):
     if not isinstance(result, dict):
         raise LLMError("分类结果必须为 JSON 对象")
@@ -28,7 +41,8 @@ def parse_classify_result(result, records=()):
     if not isinstance(description, str) or len(description) > 400:
         raise LLMError("shape_description 必须是不超过 400 字的字符串")
     if status == "empty":
-        if any(result.get(key) is not None for key in ("color", "shape", "label_kind", "label_description")):
+        if not all(_is_null(result.get(key))
+                   for key in ("color", "shape", "label_kind", "label_description")):
             raise LLMError("只有明确无物体才能 empty，颜色、形状及贴纸必须显式为 null")
         return dict(status=status, color=None, shape=None, label_kind="none",
                     label_description=None, description=description)
