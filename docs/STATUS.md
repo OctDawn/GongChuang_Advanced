@@ -73,6 +73,8 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 
 线上版2 单图：约 2.6 秒/张。
 
+**2026-11-18 结论（同一批图，只改 prompt）**：删掉「封闭端面上那圈窄边是壁厚、不是空腔证据」这一句后，横放通心筒由 `cylinder`（错）变为 `cylinder_thinWalled`，且竖放/球/贴纸方块/四棱锥全部无回退；横放 5/5、竖放 5/5 稳定。耗时回到 3.0~4.5 秒（尾延迟 6.8 秒一次）。
+
 ## 四、`.env` 线下定案值
 
 | 键 | 值 | 备注 |
@@ -85,7 +87,7 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 | `LLM_CACHE_MODE` | `portable` | 千问不支持显式缓存 |
 | `LLM_REASONING_EFFORT` | `off` | 传了会 400 |
 | `LLM_SERVICE_TIER` | 空 | OpenRouter 专用 |
-| `LLM_FALLBACK_TIMEOUT` | `15`（测完再定 11~12） | 单件总预算 |
+| `LLM_FALLBACK_TIMEOUT` | `12` | 单件总预算（实测 3~4.5s，尾延迟 6.8s） |
 | `YOLO_FALLBACK` | `0` → 待改 `1` | YOLO 验证后再开 |
 | `LLM_CHAIN` | **不写** | 写了才启用多 provider 链 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | 注释掉 | 千问直连 |
@@ -94,9 +96,9 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 
 ## 五、待办（按优先级）
 
-1. **正常光照下的基线重拍**（5~6 件）——手电筒那批不能当基线。阻塞点：需要到机器旁。
-2. **`LLM_FALLBACK_TIMEOUT` 定档**：按 4 视角实测（3.2~4.3s）+ 一次重试余量，建议 11~12s。
-3. **YOLO 兜底接入验证**：`YOLO_FALLBACK=1`，断网/超时场景下确认能接手，且不掉帧。
+1. ~~正常光照下的基线重拍~~ → 已完成（2026-11-18，5 件，4/5→修正 prompt 后 5/5）。
+2. ~~`LLM_FALLBACK_TIMEOUT` 定档~~ → 已定 **12**。
+3. **YOLO 兜底**：模型重训中；离线验证工具 `tools/yolo_check.py` 已就位。
 4. **`MAX_ITEMS_PER_CATEGORY=4` 与电控/盒子联调**：第 5 件回 0 时的行为确认（不卡流程）。
 5. **现场彩排**：现场光照 + 现场网络，跑完整一轮（含显示屏、串口时序）。
 6. **（可选）OpenAI 链启用**：先用 `tools/node_sweep.py` 实测节点，再配 `LLM_CHAIN`。
