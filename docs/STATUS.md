@@ -10,9 +10,9 @@
 **定案架构**：
 
 ```
-main_push_llm.py            ← 唯一入口（线下四视角逐件）
+main_push_llm.py            ← 唯一入口（线下五视角逐件）
   └─ 阶段1 查栏 c：qwen3-vl-plus（2 图：托盘 + 空托盘参考）
-  └─ 阶段2 识别 a：qwen3-vl-plus（4 视角，19 图含固定前缀）
+  └─ 阶段2 识别 a：qwen3-vl-plus（5 视角：①②③④ + ⑤ 镜面看死角；20 图含固定前缀）
        └─ 失败 → YOLO（RKNN，待验证接入）
        └─ 再失败 → 回 0（本件不分拣）
   显示屏：6 行、白底黑字黑框、无「未归类」行
@@ -26,10 +26,10 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| `main_push_llm.py` | **在用（唯一入口）** | 线下四视角；`ONLINE_MODE=0` / `SINGLE_SHAPE_MODE=0` |
+| `main_push_llm.py` | **在用（唯一入口）** | 线下五视角；`ONLINE_MODE=0` / `SINGLE_SHAPE_MODE=0` |
 | `llm/qw.py` | **在用** | 单 provider 请求 + 重试；`qwen_realise()` / `warm_up()` 入口可转发给 chain |
-| `llm/prompt.py` | **在用** | 四视角分类/查栏 prompt（含开口判据、贴纸规则） |
-| `llm/shape_recognition.py` | **在用** | 四视角分类主流程、形状记忆 |
+| `llm/prompt.py` | **在用** | 五视角分类/查栏 prompt（含开口判据、贴纸规则、镜面机位说明） |
+| `llm/shape_recognition.py` | **在用** | 五视角分类主流程、形状记忆 |
 | `llm/shape_memory.py` | **在用** | 本次运行内的形状记忆（重启清空） |
 | `llm/empty_examples.py` | **在用** | 固定参考图（空场景 + 形状示例） |
 | `shared/common.py` / `shared/const.py` / `shared/show.py` | **在用** | 串口、相机、显示、常量 |
@@ -42,15 +42,15 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 
 | 工具 | 用途 | 状态 |
 |---|---|---|
-| `tools/snap_views.py` | 现场拍识别区四视角并存盘 | 新增，已在板上跑通 |
-| `test_llm.py classify` | 用 4 张图离线跑四视角分类 | 在用 |
+| `tools/snap_views.py` | 现场拍识别区五视角并存盘（第 5 路走镜面裁剪） | 在用 |
+| `test_llm.py classify` | 用 N 张图离线跑分类（N=STAGE_TWO_DETECTION_COUNT） | 在用 |
 | `tools/grid_offline.py` | 单图跑 `classify_grid`（线上版2） | 在用 |
 | `tools/net_check.sh` | 校验当前单 provider 的 key/端点 | 在用 |
 | `tools/llm_probe.py` | 校验 `LLM_CHAIN` 各家可用性 | 备用 |
 | `tools/node_sweep.py` | 逐节点实测能否连 OpenAI | 备用（未实机验证） |
 | `tools/online_check.py` / `online_preview.py` / `grid_check.py` | 线上赛段自检 | 冻结 |
 
-## 三、实测数据（2026-11-17）
+## 三、实测数据（2026-11-17 起）
 
 四视角（`qwen3-vl-plus`，`portable`，`reasoning=off`）：
 
@@ -76,13 +76,20 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 **2026-11-18 结论（同一批图，只改 prompt）**：删掉「封闭端面上那圈窄边是壁厚、不是空腔证据」这一句后，横放通心筒由 `cylinder`（错）变为 `cylinder_thinWalled`，且竖放/球/贴纸方块/四棱锥全部无回退；横放 5/5、竖放 5/5 稳定。耗时回到 3.0~4.5 秒（尾延迟 6.8 秒一次）。**2026-11-18 21:56 复测**：横放 5/5 正确，其中一次 13.37 秒（超过 12 秒预算，生产环境会回 0）——
 属偶发网络抖动（当天 50+ 次中仅 1 次）；保留 `LLM_FALLBACK_TIMEOUT=12`：宁可偶发丢 1 件，也不要把单件拖到 15 秒违规边缘。
 
+**2026-11-19 五视角 + 镜面（关键）**：第 5 路是“对着镜面拍死角”的机位（镜中是**从斜下方向上仰视**的像）。
+- 整图直送（含下半幅虚焦桶体）：3/3 判成 `cylinder`（实心，错）；
+- 只裁镜面上半部（`DETECT_MIRROR_CROP=0,0,1,0.60`）：3/3 `cylinder_thinWalled`，耗时 3.0 秒。
+- 替身实验（第 5 张换成 view_4 副本）：3/3 正确 → 证明是 **⑤ 的内容**在干扰，不是张数/尺寸。
+
 ## 四、`.env` 线下定案值
 
 | 键 | 值 | 备注 |
 |---|---|---|
 | `ONLINE_MODE` | `0` | 否则跑线上版1 |
 | `SINGLE_SHAPE_MODE` | `0` | 否则跑线上版2 |
-| `STAGE_TWO_DETECTION_COUNT` | `4` | 四视角 |
+| `STAGE_TWO_DETECTION_COUNT` | `5` | 五视角（④ 之后新增 ⑤ 镜面死角） |
+| `DETECT_MIRROR_VIEW_INDEX` | `5` | 第 5 路走镜面专用裁剪；`0` = 关闭 |
+| `DETECT_MIRROR_CROP` | `0,0,1,0.60` | 左,上,右,下；只留镜面所在的上 60% |
 | `DASHSCOPE_BASE_URL` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 国内直连 |
 | `DASHSCOPE_MODEL` | `qwen3-vl-plus` | |
 | `LLM_CACHE_MODE` | `portable` | 千问不支持显式缓存 |
@@ -100,6 +107,7 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
 1. ~~正常光照下的基线重拍~~ → 已完成（2026-11-18，5 件，4/5→修正 prompt 后 5/5）。
 2. ~~`LLM_FALLBACK_TIMEOUT` 定档~~ → 已定 **12**。
 3. **YOLO 兜底**：模型重训中；离线验证工具 `tools/yolo_check.py` 已就位。
+6. **五视角实机验证**：接电控跑一整轮，确认第 5 路裁剪后不拖慢、不误判（离线已 3/3）。
 4. **`MAX_ITEMS_PER_CATEGORY=4` 与电控/盒子联调**：第 5 件回 0 时的行为确认（不卡流程）。
 5. **现场彩排**：现场光照 + 现场网络，跑完整一轮（含显示屏、串口时序）。
 6. **（可选）OpenAI 链启用**：先用 `tools/node_sweep.py` 实测节点，再配 `LLM_CHAIN`。
@@ -124,8 +132,9 @@ main_push_llm.py            ← 唯一入口（线下四视角逐件）
   4G 与它不在同一控制器 → 判定为 **5V 供电被拉塌**，不是带宽问题；回退后计数不再增长。
   若确实需要备用：必须给模组**独立供电**（带外接电源的 USB hub），不要赌 USB3 口。
 - 手电筒/点光源直射会让高反光件（球）过曝，模型会如实回 `uncertain` → 回 0。
-- 识别区加 45° 镜面（2026-11-18 实测）：反射像在原图约 110×80 像素，送模型后只剩 60×45，
-  白底贴纸的图案读不出。加三行 prompt 规则（镜像属同一件、镜中贴纸计入、看不清就忽略）后
-  仍 3/3 为 `label_kind=none`，且横放通心筒出现一次 `cylinder`（同批图曾 5/5 正确），已整体 revert。
-  结论：**镜子这条路线要成立，必须先把反射像做到 ≥150px 并离开画面边缘**；否则建议撤掉。
+- 识别区第 5 路（镜面机位）**必须裁剪后再送模型**：整图直送会把下半幅虚焦桶体当成主体，
+  3/3 判成实心 `cylinder`；裁到镜面上 60%（`DETECT_MIRROR_CROP=0,0,1,0.60`）后 3/3 正确。
+  镜中是“从斜下方向上仰视”的像，方向与实物相反，`⑤` 的机位说明必须写清，否则模型会按错方向推断。
+- Bus01 现挂 ④ + ⑤ 两路：④（icspring，未压缩）降到 **7.5fps**，⑤ 15fps，`fail=0`。
+  每件只取 1 帧，7.5fps 够用；但 **Bus01 已满，不要再往这条总线加设备**。
 - 线上版2 的历史图不能代表线下四视角难度。
