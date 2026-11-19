@@ -30,7 +30,7 @@ load_dotenv()      # 必须在 llm.* 之前（形状示例图路径等）
 
 import cv2  # noqa: E402
 
-from shared.common import crop_detect_llm, initial_cap  # noqa: E402
+from shared.common import crop_detect_for_view, initial_cap  # noqa: E402
 from shared.const import (  # noqa: E402
     DETECT_CAMERA_IDS, DETECT_CAMERA_NAMES, DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
 )
@@ -80,7 +80,7 @@ def main():
         raw_path = os.path.join(out_dir, "view_%d.jpg" % (index + 1))
         sent_path = os.path.join(out_dir, "sent_%d.jpg" % (index + 1))
         cv2.imwrite(raw_path, frame)
-        view = crop_detect_llm(frame)
+        view = crop_detect_for_view(frame, index + 1)
         cv2.imwrite(sent_path, view)
         paths.append(raw_path)
         print("  %d/%d %-16s %s  %dx%d -> 送模型 %dx%d" % (

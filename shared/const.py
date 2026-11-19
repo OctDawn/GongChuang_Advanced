@@ -163,6 +163,32 @@ PALLET_LLM_INSET = {"left": 0.01, "top": 0.01, "right": 0.03, "bottom": 0.03}
 #   右、上各 1/6 后约 600x600；左、下暂不裁。
 DETECT_LLM_INSET = {"left": 0.13 , "top": 0.13, "right": 0.13, "bottom": 0.13}
 
+# ---- 镜面机位（某一路是对着镜子拍死角）专用裁剪 ----
+# 该路画面下半部是桶体/虚焦前景，会把模型带偏（2026-11-19 实测：直接送 5 视角 → cylinder 3/3，
+# 只裁镜面上半部 → cylinder_thinWalled 3/3）。这里只把镜面所在区域送模型。
+# DETECT_MIRROR_VIEW_INDEX=0（默认）= 关闭，行为与之前完全一致。
+# DETECT_MIRROR_CROP = 左,上,右,下（相对整帧的比例，0~1）。
+try:
+    DETECT_MIRROR_VIEW_INDEX = int(os.environ.get("DETECT_MIRROR_VIEW_INDEX", "0"))
+except ValueError:
+    DETECT_MIRROR_VIEW_INDEX = 0
+
+
+def _parse_crop_ratios(text, default=(0.0, 0.0, 1.0, 0.60)):
+    try:
+        values = [float(part) for part in str(text).replace("，", ",").split(",")]
+        if len(values) != 4:
+            return default
+        left, top, right, bottom = values
+        if not (0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0):
+            return default
+        return (left, top, right, bottom)
+    except ValueError:
+        return default
+
+
+DETECT_MIRROR_CROP = _parse_crop_ratios(os.environ.get("DETECT_MIRROR_CROP", "0,0,1,0.60"))
+
 # ---- 识别区送模型的方式（影响速度与视野） ----
 #   "square"（默认）：采集线程裁居中方正 720x720，这里再四边内缩 0.13 -> 532x532。
 #                     1 张图只占 1 个视觉 tile，最省时。

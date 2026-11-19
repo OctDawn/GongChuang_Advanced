@@ -21,6 +21,7 @@ from shared.const import (
     LASER_SENSOR_ON_LEFT,
     PALLET_LLM_INSET, DETECT_LLM_INSET, FRAME_RETRY_TIMES,
     DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
+    DETECT_MIRROR_VIEW_INDEX, DETECT_MIRROR_CROP,
     CAMERA_RECOVER_QUICK_RETRIES, CAMERA_RECOVER_QUICK_INTERVAL,
     CAMERA_RECOVER_BACKOFF, CAMERA_RECOVER_DISCARD,
 )
@@ -529,6 +530,24 @@ def crop_detect_llm(frame):
         logger.warning("识别区图不是正方形（%dx%d）：应先 crop_to_square，"
                        "否则内缩比例会把它裁成矩形", width, height)
     return crop_by_ratio(frame, **DETECT_LLM_INSET)
+
+
+def crop_detect_for_view(frame, view_index):
+    """按视角索引裁剪送模型图：镜面机位只保留镜面区域，其余走 crop_detect_llm。
+
+    DETECT_MIRROR_VIEW_INDEX=0 时退化为原行为（全部走 crop_detect_llm）。
+    镜面机位的画面下半部是桶体/虚焦前景，会干扰形状判断，所以单独裁。
+    """
+    if DETECT_MIRROR_VIEW_INDEX and view_index == DETECT_MIRROR_VIEW_INDEX:
+        left, top, right, bottom = DETECT_MIRROR_CROP
+        height, width = frame.shape[:2]
+        y0, y1 = int(top * height), max(int(top * height) + 1, int(bottom * height))
+        x0, x1 = int(left * width), max(int(left * width) + 1, int(right * width))
+        crop = frame[y0:y1, x0:x1]
+        logger.info("镜面视角 %d 裁剪：%dx%d -> %dx%d", view_index,
+                    width, height, crop.shape[1], crop.shape[0])
+        return _resize_long_side(crop, DETECT_SEND_MAX_SIDE)
+    return crop_detect_llm(frame)
 
 
 # ---- 托盘几何（YOLO 查栏用） ----

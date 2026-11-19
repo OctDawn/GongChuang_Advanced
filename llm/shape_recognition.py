@@ -9,7 +9,7 @@ from llm.prompt import (
     build_group_match_prompt, build_group_reference_prompt, build_fixed_view_classify_prompt,
     PROMPT_SHAPE_REFERENCE, PROMPT_CLASSIFY_CURRENT,
 )
-from shared.common import crop_detect_llm, parse_group_match
+from shared.common import crop_detect_llm, crop_detect_for_view, parse_group_match
 from shared.const import LASER_LLM_TIMEOUT, LASER_QUICK_TIMEOUT
 
 logger = logging.getLogger("wave.vision")
@@ -147,7 +147,8 @@ class ShapeRecognizer:
                 raise LLMError(f"形状记忆识别需要 {self.memory.view_count} 个视角的照片")
             records = self.memory.records
             # 送模型的识别区图统一施加 DETECT_LLM_INSET；手工准备的形状示例图不裁。
-            views = [crop_detect_llm(frame) for frame in frames]
+            views = [crop_detect_for_view(frame, index + 1)
+                     for index, frame in enumerate(frames)]
             prefix_sections = self.classify_prefix_sections()
 
             # 一次携带全部参考图；只有 API 包装层处理格式/网络异常重试。
