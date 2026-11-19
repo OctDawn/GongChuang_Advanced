@@ -36,6 +36,14 @@ import time
 import cv2
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from shared.dotenv import load_dotenv  # noqa: E402
+
+load_dotenv()      # 必须在 llm.* / shared.const 之前：
+# llm.prompt 在导入时就会读 shared.const，晚一步就会拿到默认值（STAGE_TWO_DETECTION_COUNT=4），
+# 表现为“加了第 5 路却仍报需要 4 张”。
+
 from llm.qw import qwen_realise, LLMError
 from llm.prompt import PROMPT_PALLET_COLUMNS
 from llm.shape_memory import ShapeMemory
