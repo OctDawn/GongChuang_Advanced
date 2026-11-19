@@ -45,6 +45,7 @@ _ALL_DETECT_NAMES = (
     "识别区②斜上方(相对)",
     "识别区③正下方仰视",
     "识别区④水平侧视",
+    "识别区⑤补角",
 )
 DETECT_CAMERA_IDS = tuple(
     os.environ.get(f"CAMERA_DETECT_{index}", f"/dev/wave/cam_detect_{index}")

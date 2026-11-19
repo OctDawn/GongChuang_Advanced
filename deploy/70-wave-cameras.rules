@@ -48,3 +48,8 @@ SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc880000.usb
 
 # 识别区④ 水平侧视（补 ①② 的死角；新相机）
 SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.2:1.0", SYMLINK+="wave/cam_detect_4"
+
+# 识别区⑤ 补角（专门拍 ①②③④ 都看不到的那一面；0bda:9143 / RYS）
+# 2026-11-19：拔掉 4G 模组后把新相机插在它原来的口（Bus01 嵌套 hub 的 Port 2），
+# 与 ④ 同总线 → 该总线 2 路，已达到「每条 480M 总线最多 2 路 MJPG」的上限。
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.1.2:1.0", SYMLINK+="wave/cam_detect_5"
