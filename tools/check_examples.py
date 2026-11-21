@@ -51,7 +51,10 @@ for e in examples:
         bad.append(e["filename"])
 
 used = {e["filename"] for e in examples}
-skip = {"pallet_empty.jpg", "empty_top.jpg", "empty_bottom.jpg"}
+# 空场景参考图由 EMPTY_SCENES 管理，不属于 SHAPE_EXAMPLES，不参与孤儿判定。
+# empty_mirror.jpg 目前故意不启用（裁剪方式与实时不一致），先保留文件。
+skip = {"pallet_empty.jpg", "empty_top.jpg", "empty_bottom.jpg",
+        "empty_side.jpg", "empty_mirror.jpg"}
 
 # 线上赛段另有 6 张类别参考图（只给 ONLINE_MODE 用，不在 SHAPE_EXAMPLES 里）。
 # 不把它们算进来，工具会把它们误报成“孤儿图”。

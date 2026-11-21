@@ -29,10 +29,15 @@ EMPTY_SCENES = {
     "detect_area": (("empty_top.jpg", True),
                     ("empty_bottom.jpg", True),
                     ("empty_side.jpg", False)),
+    # 注意：`empty_mirror.jpg`（⑤ 镜面）刻意没放进来。第 5 路送模型前会先裁成"上 60%"
+    # （DETECT_MIRROR_CROP），而空场景参考走的是另一套裁剪（crop_to_square）。
+    # 两者取景不一致时，混在一起会干扰模型，先不用；需要时再单独适配。
 }
 
 _TOP = "斜上①②"
 _BOTTOM = "正下③"
+_SIDE = "水平侧视④"
+_MIRROR = "镜面⑤（经反射，从斜下方向上仰视，方向与实物相反）"
 
 # 文件名与模型词表显式对应；示例中外围结构不属于标注的目标。
 SHAPE_EXAMPLES = (
@@ -87,6 +92,20 @@ SHAPE_EXAMPLES = (
      "view": _TOP,
      "note": "横放的橙色四棱锥。看到的三角形只是一个**侧面**：4 个三角形侧面**全部汇聚到同一个顶点**"
              "（多条棱在同一处收成一点），底面是四边形。与三棱柱的区别就在有没有这个汇聚点。"},
+
+    # 2026-11-21：结构改造后补拍 ④ 侧视与 ⑤ 镜面两个机位的示例
+    {"filename": "orange_cylinder_thinwalled_side.jpg", "color": "orange",
+     "shape": "cylinder_thinWalled", "view": _SIDE,
+     "note": "橙色薄壁圆柱的水平侧视（④）。正对筒身时开口呈椭圆，能看到口沿内侧的内壁与孔洞纵深；"
+             "壁厚只体现在口沿那一圈的宽度上。这条视线补的是 ①② 俯视时被压扁的竖直侧面。"},
+    {"filename": "orange_cylinder_thinwalled_mirror.jpg", "color": "orange",
+     "shape": "cylinder_thinWalled", "view": _MIRROR,
+     "note": "同一只橙色薄壁圆柱在镜子里的像（⑤）。镜中是从斜下方向上仰视的视角，口径为椭圆、孔内可见内壁；"
+             "上下左右与实物相反，只用来补充该面的开口证据，不要据此推断空间位置。"},
+    {"filename": "red_cube_sticker_mirror.jpg", "color": "red", "shape": "cube",
+     "view": _MIRROR,
+     "note": "红色正方体，贴纸所在的那一面只能从镜子里看到（⑤）。镜中能看到白色贴纸贴在侧面上；"
+             "说明镜中影像是同一件物体、不是第二件，贴纸按 pattern 计入 label_kind。"},
 )
 
 

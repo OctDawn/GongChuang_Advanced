@@ -34,7 +34,7 @@ main_push_llm.py            ← 唯一入口（线下五视角逐件）
 | `llm/prompt.py` | **在用** | 五视角分类/查栏 prompt（含开口判据、贴纸规则、镜面机位说明） |
 | `llm/shape_recognition.py` | **在用** | 五视角分类主流程、形状记忆 |
 | `llm/shape_memory.py` | **在用** | 本次运行内的形状记忆（重启清空） |
-| `llm/empty_examples.py` | **在用** | 固定参考图（空场景 + 形状示例） |
+| `llm/empty_examples.py` | **在用** | 固定参考图（空场景 + 形状示例）；2026-11-21 新增 ④侧视空场景与 3 张 ④/⑤ 示例 |
 | `shared/common.py` / `shared/const.py` / `shared/show.py` | **在用** | 串口、相机、显示、常量 |
 | `llm/providers.py` + `llm/chain.py` | **预留（默认不生效）** | 多 provider 链；不配 `LLM_CHAIN` 就走 qw 原路径 |
 | `main_online.py` / `main_online2.py` | **冻结** | 线上赛段入口，赛后不再维护，仅留档 |
@@ -138,6 +138,10 @@ main_push_llm.py            ← 唯一入口（线下五视角逐件）
 - 识别区第 5 路（镜面机位）**必须裁剪后再送模型**：整图直送会把下半幅虚焦桶体当成主体，
   3/3 判成实心 `cylinder`；裁到镜面上 60%（`DETECT_MIRROR_CROP=0,0,1,0.60`）后 3/3 正确。
   镜中是“从斜下方向上仰视”的像，方向与实物相反，`⑤` 的机位说明必须写清，否则模型会按错方向推断。
+- 例图（2026-11-21 更新）：空场景新增 `empty_side.jpg`（④侧视，已启用），形状示例新增
+  `orange_cylinder_thinwalled_side/mirror.jpg`、`red_cube_sticker_mirror.jpg`（共 16 张）。
+  `empty_mirror.jpg` 已拍但**未启用**：⑤ 实时图要裁上 60%，空场景参考走的是 crop_to_square，
+  取景不一致会干扰模型；要启用需先统一裁剪链。
 - Bus01 现挂 ④ + ⑤ 两路：④（icspring，未压缩）降到 **7.5fps**，⑤ 15fps，`fail=0`。
   每件只取 1 帧，7.5fps 够用；但 **Bus01 已满，不要再往这条总线加设备**。
 - 4G 棒的可用姿势（2026-11-20）：**插笔记本供电、用设备自带 WiFi 热点**，板子无线连它。
