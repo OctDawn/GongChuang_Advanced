@@ -106,6 +106,15 @@ CONTAIN_THRESHOLD = 0.8
 MAX_TEMP_CATEGORIES = 6
 MAX_ITEMS_PER_CATEGORY = 4   # 每盒最多 4 件（赛规：单个储物盒不得超 4 件）；超出时该件回 0
 
+# YOLO fallback 使用哪几路视角（1 起，逗号分隔）。空 = 全部。
+# 为何需要：③ 逆光、⑤ 镜面反射、④ 侧视都与训练集分布差异大，容易贡献脏票。
+# 只开 ①② 能显著减少误检，代价是“开口在侧/下”的件学不到。
+_YOLO_VIEWS_ENV = os.environ.get("YOLO_VIEW_INDICES", "").strip()
+try:
+    YOLO_VIEW_INDICES = tuple(int(x) for x in _YOLO_VIEWS_ENV.split(",") if x.strip())
+except ValueError:
+    YOLO_VIEW_INDICES = ()
+
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
 

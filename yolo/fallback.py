@@ -12,7 +12,7 @@ from shared.const import (
     DETECT_AREA_SHAPE_MODEL_PATH, SHAPE_CLASSES,
     DETECT_AREA_LABEL_MODEL_PATH, LABEL_CLASSES, LABEL_DECODE_TYPES,
     PRIVILEGED_SHAPES, PRIVILEGED_SHAPE_CONFIDENCE,
-    STAGE_TWO_DETECTION_COUNT,
+    STAGE_TWO_DETECTION_COUNT, YOLO_VIEW_INDICES,
 )
 from yolo.decoder import crop_box, decode_sticker
 
@@ -59,6 +59,15 @@ class YoloFallback:
         """累计置信度、薄壁优先及贴纸解码；None 允许固定机位的实际视角数。"""
         if not frames or (expected_count is not None and len(frames) != expected_count):
             raise ValueError(f"YOLO fallback 需要 {expected_count} 个视角的照片（实际 {len(frames)} 张）")
+        # 只投票部分视角（YOLO_VIEW_INDICES，1 起）：③ 逆光 / ④ 侧视 / ⑤ 镜面与训练集分布差得远，
+        # 全开容易把脏框当成票。空 = 全部参与。
+        if YOLO_VIEW_INDICES:
+            picked = [frames[index - 1] for index in YOLO_VIEW_INDICES
+                      if 1 <= index <= len(frames)]
+            if picked:
+                logger.info("YOLO 只用视角 %s（共 %d 路）",
+                            list(YOLO_VIEW_INDICES), len(picked))
+                frames = picked
         color_sums = np.zeros(len(DETECT_AREA_COLOR_CLASSES), dtype=np.float32)
         shape_sums = np.zeros(len(SHAPE_CLASSES), dtype=np.float32)
         label_sums = np.zeros(len(LABEL_CLASSES), dtype=np.float32)

@@ -75,6 +75,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("dirs", nargs="+", help="包含 view_1..N 的目录（支持通配符）")
     parser.add_argument("--per-model", action="store_true", help="打印每个模型的单帧耗时")
+    parser.add_argument("--views", default="",
+                        help="只投票指定视角（1 起，逗号分隔），如 1,2；默认全部")
     args = parser.parse_args()
 
     targets = []
@@ -100,8 +102,18 @@ def main():
                 print("%-40s 跳过：需要 %d 张，实际 %d 张"
                       % (tag[:40], STAGE_TWO_DETECTION_COUNT, len(frames)))
                 continue
+            wanted = [int(x) for x in args.views.split(",") if x.strip()] if args.views else []
+            expected = STAGE_TWO_DETECTION_COUNT
+            if wanted:
+                picked = [frames[index - 1] for index in wanted if 1 <= index <= len(frames)]
+                if not picked:
+                    print("%-40s 跳过：--views 给的序号都不存在" % tag[:40])
+                    continue
+                print("%-40s 只投票视角 %s" % (tag[:36], wanted))
+                frames = picked
+                expected = None          # 已经手动筛过，不再按总视角数校验
             started = time.monotonic()
-            color, shape, label = fallback.classify(frames)
+            color, shape, label = fallback.classify(frames, expected_count=expected)
             elapsed = time.monotonic() - started
             print("%-40s %-8s %-22s %-10s %5.2fs"
                   % (tag[:40], color or "-", shape or "-", label or "-", elapsed))
