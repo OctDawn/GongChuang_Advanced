@@ -85,7 +85,8 @@ def main():
     for index in order:
         class_id = int(ids[index])
         name = classes[class_id] if 0 <= class_id < len(classes) else "越界#%d" % class_id
-        box = [int(round(value)) for value in points[index][:4]]
+        box = [int(round(float(value)))
+               for value in np.asarray(points[index]).reshape(-1)[:4]]
         print("%-24s %8.3f  %s" % (name, float(scores[index]), box))
     print("\n共 %d 个候选；分数低于 0.3 的一般可忽略。" % len(ids))
 

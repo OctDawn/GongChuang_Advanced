@@ -142,8 +142,10 @@ def infer_class_count(outputs):
         if len(shape) == 3 and shape[1] > 64:
             return int(shape[1] - 64)
     candidates = [int(o.shape[1]) for o in outputs
-                  if len(o.shape) == 4 and int(o.shape[1]) != 64]
+                  if len(o.shape) == 4 and int(o.shape[1]) not in (1, 64)]
     if candidates:
+        # 同一个 nc 会在 3 个尺度上重复出现；objectness 通道（宽 1）必须排除，
+        # 否则 12 类模型会出现 {12, 1} 各 3 票的平票，结果随机。
         return max(set(candidates), key=candidates.count)
     return None
 
