@@ -112,6 +112,13 @@ LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "low").strip().low
 # 已被对端单方面关掉的「僵尸连接」，表现为 LLM 请求报 Connection error。
 LLM_KEEPALIVE_EXPIRY = float(os.environ.get("LLM_KEEPALIVE_EXPIRY", "20"))
 LLM_TIMEOUT = float(os.environ.get("LLM_TIMEOUT", "60"))     # 单次请求超时（秒）
+# 采样温度（空 = 不传、用服务端默认）。比赛场景建议设 0：同一件货必须每次得到同样答案，
+# 否则裁判横向比对时会看到「同物不同盒」。
+_TEMPERATURE_ENV = os.environ.get("LLM_TEMPERATURE", "").strip()
+try:
+    LLM_TEMPERATURE = float(_TEMPERATURE_ENV) if _TEMPERATURE_ENV != "" else None
+except ValueError:
+    LLM_TEMPERATURE = None
 LLM_RETRIES = int(os.environ.get("LLM_RETRIES", "2"))        # 失败重试次数（总尝试 = 1 + retries）
 # 连接类错误（代理/节点不可达、隧道被对端断开）的**额外**重试次数：这类错误换一条
 # 新连接通常立刻就好，所以单独给预算；总时长仍受 total_timeout（LLM_FALLBACK_TIMEOUT）约束。
@@ -479,6 +486,8 @@ def _qwen_realise(images, prompt, message_save_path=None, validator=None, deadli
         extra_body["service_tier"] = LLM_SERVICE_TIER
     if extra_body:
         request_options["extra_body"] = extra_body
+    if LLM_TEMPERATURE is not None:
+        request_options["temperature"] = LLM_TEMPERATURE
 
     if isinstance(images, np.ndarray):
         images = [images]
