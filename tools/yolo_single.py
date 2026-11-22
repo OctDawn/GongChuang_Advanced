@@ -59,10 +59,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=sorted(MODELS), required=True)
     parser.add_argument("--image", required=True)
+    parser.add_argument("--model-path", default="",
+                        help="覆盖模型路径（用于对比 .bak 旧模型）")
     parser.add_argument("--topk", type=int, default=5, help="打印前几个候选")
     args = parser.parse_args()
 
     model_path, classes = MODELS[args.model]
+    if args.model_path:
+        model_path = args.model_path
     image = _imread(args.image)
     if image is None:
         raise SystemExit("读不出图片: %s" % args.image)
