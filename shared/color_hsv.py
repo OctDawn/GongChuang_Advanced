@@ -18,23 +18,26 @@ _COLOR_NAMES = (
 
 
 def _name_from_hsv(h, s, v):
-    """把中位 HSV 映射到颜色名。阈值按实物（3D 打印件 + 顶光）标定。"""
+    """把中位 HSV 映射到颜色名。阈值按实物（3D 打印件 + 顶光）标定。
+
+    2026-11-22 实测标定：淡紫件 s≈33（不能当白，白门限降到 22）；
+    浅棕件 h≈8/s≈60（棕与橙按 s<110 分）；粉件 h≈172/s≈121（粉与红按 s<150 分）。
+    """
     if v < 45:
         return "black"
-    if s < 35:
+    if s < 22:
         return "white" if v >= 140 else "gray"
-    # 色相分段
-    if h < 8 or h >= 168:
-        # 红 / 粉：低饱和偏粉
-        return "pink" if s < 120 else "red"
-    if h < 20:
-        # 橙 / 棕：只差明度
-        return "brown" if v < 110 else "orange"
-    if h < 33:
+    # 红 / 粉：低饱和偏粉
+    if h < 6 or h >= 165:
+        return "pink" if s < 150 else "red"
+    # 橙 / 棕：只差饱和与明度（浅棕 s 低）
+    if h < 25:
+        return "brown" if s < 110 else "orange"
+    if h < 35:
         return "yellow"
     if h < 85:
         return "green"
-    if h < 130:
+    if h < 135:
         return "blue"
     return "purple"
 
