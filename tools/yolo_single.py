@@ -80,7 +80,7 @@ def main():
         stack.callback(runner.release)
         points, ids, scores = runner.infer(image, return_scores=True)
 
-    if not ids:
+    if len(ids) == 0:
         print("没有检测到任何目标（这张图对该模型可能太小/太暗/类别不符）")
         return
 

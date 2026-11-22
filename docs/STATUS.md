@@ -109,8 +109,10 @@ main_push_llm.py            ← 唯一入口（线下五视角逐件）
 
 1. ~~正常光照下的基线重拍~~ → 已完成（2026-11-18，5 件，4/5→修正 prompt 后 5/5）。
 2. ~~`LLM_FALLBACK_TIMEOUT` 定档~~ → 已定 **12**。
-3. **YOLO 兜底**：新模型（shape/color，各 20.9MB）已就位；待 `tools/probe_model_classes.py` 校验类别与顺序，
-   再用 `tools/yolo_single.py` / `yolo_check.py` 实测，通过后才开 `YOLO_FALLBACK=1`。
+3. **YOLO 兜底**：新模型（shape/color）类别数校验通过（16/12），但**解码输出退化**：
+   `yolo_single` 得到零宽框 + 错类别（`hemisphere`/`brown`）；旧 `.bak` 模型（15 类）在同一张图上 **0 检测**。
+   结论：新旧都不对齐当前的预处理/解码约定，**保持 `YOLO_FALLBACK=0`**，不要在赛前耗在这条线上。
+   复现：`python tools/yolo_single.py --model shape --image <某图> [--model-path ...]`。
 6. **五视角实机验证**：接电控跑一整轮，确认第 5 路裁剪后不拖慢、不误判（离线已 3/3）。
 4. **`MAX_ITEMS_PER_CATEGORY=4` 与电控/盒子联调**：第 5 件回 0 时的行为确认（不卡流程）。
 5. **现场彩排**：现场光照 + 现场网络，跑完整一轮（含显示屏、串口时序）。
