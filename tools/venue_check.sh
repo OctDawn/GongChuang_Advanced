@@ -305,15 +305,25 @@ fi
 section '6. 显示屏'
 
 if command -v xrandr >/dev/null 2>&1; then
-    SCREEN="$(DISPLAY="${DISPLAY:-:0}" xrandr --current 2>/dev/null | grep -m1 ' connected')"
-    if [ -n "$SCREEN" ]; then
-        RES="$(printf '%s' "$SCREEN" | grep -oE '[0-9]+x[0-9]+' | head -1)"
-        W="${RES%x*}"
-        if [ "${W:-0}" -ge 1024 ] 2>/dev/null; then
-            ok "显示已连接，分辨率 $RES"
+    SCREEN_ROWS="$(DISPLAY="${DISPLAY:-:0}" xrandr --current 2>/dev/null | grep ' connected')"
+    if [ -n "$SCREEN_ROWS" ]; then
+        LOW=""
+        SHOWN=""
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            NAME_="${line%% *}"
+            RES_="$(printf '%s' "$line" | grep -oE '[0-9]+x[0-9]+\+[0-9]+\+[0-9]+' | head -1 | cut -d+ -f1)"
+            SHOWN="$SHOWN $NAME_=${RES_:-"?"}"
+            case "${RES_%x*}" in
+                ''|*[!0-9]*) LOW="$LOW $NAME_" ;;
+                *) [ "${RES_%x*}" -lt 1024 ] && LOW="$LOW $NAME_" ;;
+            esac
+        done <<< "$SCREEN_ROWS"
+        if [ -z "$LOW" ]; then
+            ok "显示正常：$SHOWN"
         else
-            warn "分辨率 $RES 偏低（EDID 没读到会退到 800x480，表格会串/截断）" \
-                 '确认看门狗：systemctl is-enabled wave-hdmi-watch；没开就 sudo systemctl enable --now wave-hdmi-watch'
+            warn "分辨率偏低：$SHOWN" \
+                 '看门狗 enabled 仍降级时：看 logs/hdmi_watch.log 的 xrandr 回显；临时救 python tools/hdmi_watch.py --force-mode'
         fi
     else
         bad "DISPLAY=${DISPLAY:-:0} 上读不到显示" '确认已登录图形会话；或 xrandr 用对 DISPLAY'

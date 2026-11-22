@@ -281,9 +281,20 @@ def main():
     else:
         log("看门狗启动: 未发现 HDMI/DP 输出")
 
+    # 为何要显式探一次：sysfs 的 edid/status 不需要 X，而 xrandr 需要 DISPLAY+XAUTHORITY。
+    # X 认证不对时，日志里只会看到「connected + edid=256」这种健康假象，
+    # 实际改模式的命令全部静默失败——降级（800x480）与整屏玫红都不会被修。
+    if not run("xrandr --current"):
+        log("[警告] xrandr 无输出：DISPLAY/XAUTHORITY 不可用；EDID 能读但改不了模式"
+            "（降级与玫红都不会被修，先查服务里的 Environment=DISPLAY/XAUTHORITY）")
+
     if args.once:
         broken = bad_rows(rows)
-        log("体检结论: " + ("正常" if not broken else f"异常 {broken}"))
+        degraded = degraded_mode_rows(rows, args.force_mode)
+        if not broken and not degraded:
+            log("体检结论: 正常")
+        else:
+            log(f"体检结论: 异常 EDID丢失={broken} 模式降级={degraded}")
         for name, status, _size in rows:
             if status == "connected":
                 describe_state(name, "体检", log)
