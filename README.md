@@ -35,6 +35,11 @@
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
 
+**11/22 hrx**
+- 重训颜色/形状 YOLO，脚本入库
+- 例图加 ④侧视 / ⑤镜面示例
+- 4G 自带热点替代手机热点
+
 **10/31 hrx**
 - 新增线上版2：单目 3 色 × 3 形
 
@@ -798,6 +803,26 @@ LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
 | 识别区分类失败 | 复用本轮各机位照片，累计颜色/形状/贴纸置信度后输出编号 |
 
 当前 `YOLO_FALLBACK=0`，这条路径**不加载也不执行**；置 `1` 才启用（同时会多加载 4 个 RKNN 模型）。
+
+### YOLO 重训与 RKNN 转换（2026-11-22）
+
+训练/导出脚本都在 `tools/`，**不在板上跑**（需要 WSL + conda `rknn` 环境 + GPU）：
+
+| 脚本 | 作用 |
+|---|---|
+| `tools/generate_yolo_dataset*.py` | 从标注数据生成 `yolo_full/` 数据集（颜色/形状两套 yaml） |
+| `tools/run_yolo_wsl.sh` | 一键：训练颜色+形状 → 导出 ONNX → 转 RKNN（输出到 `models_new/`） |
+| `tools/convert_rknn.py` | 单独做 ONNX → RKNN（rk3588，FP16，不量化） |
+| `tools/audit_dataset.py` / `preview_dataset.py` | 数据集体检 / 抽样预览 |
+| `tools/compose_empty.py` / `render_empty.py` | 合成空场景 / 背景参考图 |
+| `tools/yolo_single.py` | **板上**：单模型单图，打印类别/分数/框 |
+| `tools/yolo_check.py` | **板上**：整套 fallback 离线跑，含每帧耗时 |
+
+产物**不入库**：`runs/`、`weights/`、`yolo_full/`、`yolo_offline_dataset/`、`models_new/`
+（已加入 `.gitignore`）。入库的只有 `models/*.rknn`（部署用）和 `models/*_data.yaml`（类别名参考）。
+
+2026-11-22 更新：`shape_detect_area.rknn`、`color_detect_area.rknn` 各约 **20.9 MB**（旧版 7.3 MB
+已存为 `.bak`），输入仍为 640×640。**接入前必须先跑 `tools/probe_model_classes.py`** 校验类别数与顺序。
 
 ### 形状记忆（仅本次运行）
 

@@ -109,7 +109,8 @@ main_push_llm.py            ← 唯一入口（线下五视角逐件）
 
 1. ~~正常光照下的基线重拍~~ → 已完成（2026-11-18，5 件，4/5→修正 prompt 后 5/5）。
 2. ~~`LLM_FALLBACK_TIMEOUT` 定档~~ → 已定 **12**。
-3. **YOLO 兜底**：模型重训中；离线验证工具 `tools/yolo_check.py` 已就位。
+3. **YOLO 兜底**：新模型（shape/color，各 20.9MB）已就位；待 `tools/probe_model_classes.py` 校验类别与顺序，
+   再用 `tools/yolo_single.py` / `yolo_check.py` 实测，通过后才开 `YOLO_FALLBACK=1`。
 6. **五视角实机验证**：接电控跑一整轮，确认第 5 路裁剪后不拖慢、不误判（离线已 3/3）。
 4. **`MAX_ITEMS_PER_CATEGORY=4` 与电控/盒子联调**：第 5 件回 0 时的行为确认（不卡流程）。
 5. **现场彩排**：现场光照 + 现场网络，跑完整一轮（含显示屏、串口时序）。
@@ -147,4 +148,5 @@ main_push_llm.py            ← 唯一入口（线下五视角逐件）
 - 4G 棒的可用姿势（2026-11-20）：**插笔记本供电、用设备自带 WiFi 热点**，板子无线连它。
   直接插板子 USB 会拉塌 5V（见上条）；只有一个插座时也没有带电源 hub 的余地。
   设备插上 USB 后热点会不会被切掉，取决于型号，换设备前需重测。
-- 线上版2 的历史图不能代表线下四视角难度。
+- 训练产物不入库（`.gitignore`）：`runs/`、`weights/`、`yolo_full/`、`yolo_offline_dataset/`、`models_new/`、`*.rknn.bak`、`*.pt`、`*.onnx`。
+  入库只有 `models/*.rknn`（部署）与 `models/*_data.yaml`（类别名参考）；重训后记得把新 rknn 覆盖进去。

@@ -1,0 +1,38 @@
+__pycache__/
+*.pyc
+
+# 运行产生的图片、录像与模型回复
+raw/
+capture/
+llm_responses/
+
+# 密钥与本地配置
+.env
+
+# 日志文件
+PLANS.md
+
+# 自己
+.gitignore
+
+logs/
+*.log
+.env.bak*
+.stale_bak/
+llm/example/resources/
+# ---- 个人仓库补充：运行产物与临时文件 ----
+logs/
+*.log
+.env.bak*
+.stale_bak/
+llm/example/resources/
+
+# ---- YOLO ѵ���������󣬲���⣩----
+runs/
+weights/
+yolo_full/
+yolo_offline_dataset/
+models_new/
+*.rknn.bak
+*.pt
+*.onnx
