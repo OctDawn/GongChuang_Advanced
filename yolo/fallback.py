@@ -13,9 +13,10 @@ from shared.const import (
     DETECT_AREA_LABEL_MODEL_PATH, LABEL_CLASSES, LABEL_DECODE_TYPES,
     PRIVILEGED_SHAPES, PRIVILEGED_SHAPE_CONFIDENCE,
     STAGE_TWO_DETECTION_COUNT, YOLO_VIEW_INDICES,
-    YOLO_COLOR_COARSE, YOLO_USE_LABELS,
+    YOLO_COLOR_COARSE, YOLO_USE_LABELS, YOLO_COLOR_MODE,
 )
 from yolo.decoder import crop_box, decode_sticker
+from shared.color_hsv import classify_color_from_bbox
 
 logger = logging.getLogger("wave.vision")
 
@@ -77,10 +78,11 @@ class YoloFallback:
         label_best = np.full(len(LABEL_CLASSES), -1.0, dtype=np.float32)
         label_crops = [None] * len(LABEL_CLASSES)
         privileged_id, privileged_score = None, -1.0
+        best_score, best_frame, best_poly = -1.0, None, None
 
         for frame in frames:
             _, color_ids, color_scores = self.color_runner.infer(frame, return_scores=True)
-            _, shape_ids, shape_scores = self.shape_runner.infer(frame, return_scores=True)
+            shape_points, shape_ids, shape_scores = self.shape_runner.infer(frame, return_scores=True)
             if include_labels:
                 points, label_ids, label_scores = self.label_runner.infer(frame, return_scores=True)
             else:
@@ -89,8 +91,10 @@ class YoloFallback:
                 cid = int(cid)
                 if 0 <= cid < len(color_sums):
                     color_sums[cid] += float(score)
-            for sid, score in zip(shape_ids, shape_scores):
+            for index, (sid, score) in enumerate(zip(shape_ids, shape_scores)):
                 sid, score = int(sid), float(score)
+                if score > best_score and len(shape_points) > index:
+                    best_score, best_frame, best_poly = score, frame, shape_points[index]
                 if 0 <= sid < len(shape_sums):
                     shape_sums[sid] += score
                     if (SHAPE_CLASSES[sid] in PRIVILEGED_SHAPES
@@ -108,6 +112,15 @@ class YoloFallback:
         if not np.any(color_sums > 0) or not np.any(shape_sums > 0):
             return None, None, None
         color = DETECT_AREA_COLOR_CLASSES[int(np.argmax(color_sums))]
+        if YOLO_COLOR_MODE == "hsv" and best_poly is not None:
+            poly = np.asarray(best_poly, np.float32).reshape(-1, 2)
+            box = (float(poly[:, 0].min()), float(poly[:, 1].min()),
+                   float(poly[:, 0].max()), float(poly[:, 1].max()))
+            hsv_color, stats = classify_color_from_bbox(best_frame, box)
+            if hsv_color:
+                logger.info("YOLO 颜色：模型=%s → HSV=%s（h=%s s=%s v=%s）",
+                            color, hsv_color, stats.get("h"), stats.get("s"), stats.get("v"))
+                color = hsv_color
         if YOLO_COLOR_COARSE:
             # deep_blue/deep_green 与 blue/green 在赛场上常是同一类实物：不粗化会把同类拆盒
             color = {"deep_blue": "blue", "deep_green": "green"}.get(color, color)

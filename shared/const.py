@@ -125,6 +125,10 @@ YOLO_COLOR_COARSE = os.environ.get("YOLO_COLOR_COARSE", "1").strip().lower() not
 YOLO_USE_LABELS = os.environ.get("YOLO_USE_LABELS", "0").strip().lower() not in (
     "0", "false", "no", "off")
 
+# YOLO 颜色来源：hsv（默认，按形状框内的 HSV 统计）或 model（用颜色模型输出）。
+# 实测颜色模型把橙色判成 brown、浅色件检不出；HSV 在框内统计更稳。
+YOLO_COLOR_MODE = os.environ.get("YOLO_COLOR_MODE", "hsv").strip().lower()
+
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
 
