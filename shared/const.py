@@ -115,6 +115,16 @@ try:
 except ValueError:
     YOLO_VIEW_INDICES = ()
 
+# YOLO 颜色粗化：deep_blue/deep_green 与 blue/green 在赛场上常是同一类实物，
+# 不粗化会把同类货拆成两个盒子。YOLO_COLOR_COARSE=0 可关闭。
+YOLO_COLOR_COARSE = os.environ.get("YOLO_COLOR_COARSE", "1").strip().lower() not in (
+    "0", "false", "no", "off")
+
+# YOLO 是否参与贴纸判断。默认 0：实测会把背景图案误报成 qrcode/barcode，
+# 误报会把同类拆盒，比“少一种信息”严重；主链路（千问）仍照常判贴纸。
+YOLO_USE_LABELS = os.environ.get("YOLO_USE_LABELS", "0").strip().lower() not in (
+    "0", "false", "no", "off")
+
 # 推铲（pusher）相关配置
 COLUMN_COUNT = 5  # 盘子均分的列数
 

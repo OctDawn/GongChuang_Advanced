@@ -13,6 +13,7 @@ from shared.const import (
     DETECT_AREA_LABEL_MODEL_PATH, LABEL_CLASSES, LABEL_DECODE_TYPES,
     PRIVILEGED_SHAPES, PRIVILEGED_SHAPE_CONFIDENCE,
     STAGE_TWO_DETECTION_COUNT, YOLO_VIEW_INDICES,
+    YOLO_COLOR_COARSE, YOLO_USE_LABELS,
 )
 from yolo.decoder import crop_box, decode_sticker
 
@@ -55,8 +56,10 @@ class YoloFallback:
             return column_occupancy(points, pallet_frame.shape)
         return column_occupancy(points, pallet_frame.shape, column_count)
 
-    def classify(self, frames, expected_count=STAGE_TWO_DETECTION_COUNT, include_labels=True):
+    def classify(self, frames, expected_count=STAGE_TWO_DETECTION_COUNT, include_labels=None):
         """累计置信度、薄壁优先及贴纸解码；None 允许固定机位的实际视角数。"""
+        if include_labels is None:
+            include_labels = YOLO_USE_LABELS
         if not frames or (expected_count is not None and len(frames) != expected_count):
             raise ValueError(f"YOLO fallback 需要 {expected_count} 个视角的照片（实际 {len(frames)} 张）")
         # 只投票部分视角（YOLO_VIEW_INDICES，1 起）：③ 逆光 / ④ 侧视 / ⑤ 镜面与训练集分布差得远，
@@ -105,6 +108,9 @@ class YoloFallback:
         if not np.any(color_sums > 0) or not np.any(shape_sums > 0):
             return None, None, None
         color = DETECT_AREA_COLOR_CLASSES[int(np.argmax(color_sums))]
+        if YOLO_COLOR_COARSE:
+            # deep_blue/deep_green 与 blue/green 在赛场上常是同一类实物：不粗化会把同类拆盒
+            color = {"deep_blue": "blue", "deep_green": "green"}.get(color, color)
         shape = SHAPE_CLASSES[privileged_id if privileged_id is not None
                               else int(np.argmax(shape_sums))]
         label = None
