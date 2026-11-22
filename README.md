@@ -1313,7 +1313,7 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 | `[FAIL] HTTP 000` | DNS/TCP/TLS 不通 | 确认「先 4G 上电、后开板子」；`nmcli con up "我是谁的Mate 60"` 切手机热点 |
 | `[FAIL] HTTP 401/403` | key 失效或地区门禁 | 换 key；或临时启用 `HTTPS_PROXY` 走代理 |
 | `[FAIL] HTTP 404` | 端点或模型名错 | `DASHSCOPE_MODEL=qwen3-vl-plus`，`BASE_URL` 用 compatible-mode/v1 |
-| `[WARN] 分辨率 800x480` | EDID 没读到，X 退到兜底模式（表格会串行/截断） | **持久修：**`systemctl is-enabled wave-hdmi-watch`；没开就 `sudo systemctl enable --now wave-hdmi-watch`（它带 `--force-mode 1920x1080`，每次开机/重新握手都自修）。临时救：`python tools/hdmi_watch.py --force-mode`；仍不行重插 HDMI |
+| `[WARN] 分辨率 800x480`（EDID 正常） | 冷启动时 X 先按 800x480 的兜底时序配对；**旧版看门狗只在「断→连」时重同步**，从开机就 connected 的路径没人修（日志里只有一行「看门狗启动」就再无动静） | 同步新版 `tools/hdmi_watch.py`（启动即体检 + 每 2 秒复查降级）后 `sudo systemctl restart wave-hdmi-watch`；日志应出现 `[模式] DP-1 当前 800x480，钉回 1920x1080`。注意 `--once` 只报不修，新版会把「模式降级」报成异常 |
 | `[FAIL] /dev/ttyS0 权限不足` | 不在 `dialout` 组 | `sudo usermod -aG dialout $USER` 后重新登录（不是重启服务） |
 | `[WARN] SoC ≥80°C` | 散热不足，高温会降频（`a→v` 直接变慢） | 先看 `dmesg \| grep -i throttl`；加 **5V 风扇（独立供电，别从板子 USB 取）** 对着散热片吹；别让布/车体挡住进风口、别晒阳光。现场测法：跑 5 件前后各读一次 `tools/venue_check.sh` 或 `/sys/class/thermal/thermal_zone0/temp` |
 | `[..] capture/ 占用` 超过 10GB | 旧录像占盘且拖慢 IO | `du -sh capture/* \| sort -h \| tail` 看日期，只留最近两次（赛前留证据），其余 `rm -rf capture/20261118_*` 这类旧目录 |
@@ -1340,6 +1340,9 @@ systemctl is-enabled wave-hdmi-watch          # 必须 enabled，否则第二天
 ```
 
 - 断电重启一次，确认能自己回到待机（来不及就用 `systemctl restart`，但不等价）；
+- 重启后必须确认分辨率：`DISPLAY=:0 xrandr \| grep " connected"` 应为 `1920x1080+0+0`。
+  这一步不能省：主程序用 `pygame.display.set_mode((0,0), FULLSCREEN)`，会**采用当时的桌面模式**，
+  若它先于看门狗开窗，整张表就按 800x480 排了
 - 记号笔 + 胶带标死六台相机与镜子的位置（封车后最怕被碰）；
 - `.env` 拷一份到 U 盘；拍机位全景、接线、屏幕待机三张照片；
 - 拔掉键盘鼠标，屏幕留黑；
