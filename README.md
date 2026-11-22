@@ -27,6 +27,7 @@
 - [运行前配置](#运行前配置) —— 环境 / `.env` / 图片链路 / 缓存 / 形状记忆
 - [部署与运行](#部署与运行) —— 服务与门禁 / 图形会话 / 代理 / 手动跑 / 自启开关 / 更新板端
 - [排查手册](#排查手册) —— 自启动 / 相机 / 网络 / 显示 / 故障对照
+- [现场调试（赛前一天 30 分钟）](#现场调试赛前一天-30-分钟) —— 一键体检 / 检查项与修复 / 封车清单
 - [工具脚本（tools/）](#工具脚本tools)
 
 ---
@@ -1253,6 +1254,93 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 ---
 
+## 现场调试（赛前一天 30 分钟）
+
+> **这 30 分钟是排环境雷，不是调识别率。** 识别侧结论已经在 2026-11-22 定死（五视角、`LLM_TEMPERATURE=0`、
+> HSV 定色），现场改只会引入未验证变量。真正会翻车的永远是：上电顺序、网络/API、相机枚举与朝向、
+> 显示屏、串口时序。
+
+### 一键体检
+
+```bash
+cd ~/WaveRider_GongChuang_Vision
+bash tools/venue_check.sh               # 只读，约 15 秒；退出码 = 失败项数（0 = 可以封车）
+bash tools/venue_check.sh --cameras     # 额外逐路取帧（会占用相机，先 systemctl stop）
+bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
+```
+
+输出分 `[OK]` / `[WARN]` / `[FAIL]` 三档，每个 `[FAIL]`/`[WARN]` 下面都跟一行 `->` 修复建议。
+它**不启停服务、不改配置**；协议部分要电控配合，脚本只做静态检查。
+
+### 时间表（按这个顺序走，互不阻塞）
+
+| 分钟 | 做什么 | 命令 | 通过标准 |
+| --- | --- | --- | --- |
+| 0~3 | 上电顺序 + 冷启动 | 先 4G 上电等热点，再开板子；`bash tools/venue_check.sh --no-net` | 屏幕纯黑待机、`NRestarts=0` |
+| 3~7 | 网络与 API | `bash tools/net_check.sh; echo $?` + `python tools/llm_probe.py --image capture/views/20261119_220300_五视角_通心筒/view_1.jpg` | 两个退出码都是 0 |
+| 7~12 | 六路相机 | `ls -l /dev/wave/` + `--cameras` + `python tools/snap_views.py` | 6/6 别名、各 30/30 帧、五张图逐张目视（⑤ 裁后必须框住死角） |
+| 12~15 | 显示屏 | `python tools/probe_display.py` + `python tools/hdmi_watch.py --once` | 白底黑字 6 行、图片列有图、分辨率不掉到 800×480 |
+| 15~18 | 与电控对协议 | 串口工具看原始字节 | `c`→5 位 `1/0`、`a`→`1~6`、`v`→先上屏再回 `f` |
+| 18~24 | 真货闭环（至少 3 件） | 走 `a → 识别 → v → 显示` | `a→v` 3.2~3.6s、编号与盒对应 |
+| 24~27 | 两个致命边界 | 连推 5 件同类；`v` 早于类别 | 第 5 件回 `0` 不卡流程；不死锁不错位 |
+| 27~30 | 封车 | 见下方清单 | 全部绿 + 断电重启能自恢复 |
+
+**时间陷阱（不是故障，别慌）**：
+
+- `start_vision.sh` 会先等 `127.0.0.1:7890` 最多 **30 秒**（即使 `HTTPS_PROXY` 已注释掉），日志里两行
+  `!! 没读到 HTTPS_PROXY` 是预期输出；
+- 还会等 X 显示最多 60 秒；相机别名最多 60 秒；真实 API 往返不通过时会**最多重试 300 秒**；
+- 所以冷启动正常是 **90~120 秒**。脚本会打印「上电后 Xs 进入 active」，以那个数为准。
+
+### 检查项 → 失败原因 → 修复
+
+| 现象（脚本 / 日志） | 原因 | 修复 |
+| --- | --- | --- |
+| `[FAIL] .env 里有行内注释` | `shared/dotenv.py` 不剥 ` #`，注释被当成值；数值型 `int()` 抛错后被 `except` 静默吞成默认值 | 删掉 `#` 及其后内容，注释单独占一行。2026-11-22 实例：`YOLO_VIEW_INDICES=1,2 # 只让前两路` → 静默变 `()`（五路全参与，耗时 0.98s 不降） |
+| `[FAIL] 存在重复键` | 两个加载器都是「先到先得」 | 留一行，`sort .env \| grep -vE '^\s*#' \| cut -d= -f1 \| uniq -d` 复查 |
+| `[WARN] STAGE_TWO_DETECTION_COUNT 未写` | 代码默认 4 | 写 `5`；少一路会让 ⑤ 镜面失效 |
+| `[WARN] DETECT_MIRROR_VIEW_INDEX` 与机位数不符 | ⑤ 不裁剪 → 整图直送会把虚焦桶体当主体 | 写 `5`（等于机位数） |
+| `[FAIL] is-enabled=disabled` | 第二天上电不会自启 | `sudo systemctl enable wave-vision-llm` |
+| `[FAIL] NRestarts>0` | 反复崩溃：相机别名缺失 / X 没起来 / 串口占用 | `journalctl -u wave-vision-llm -b --no-pager \| tail -40` 看第一条 Traceback |
+| `[FAIL] 缺 N 个相机别名` | udev 规则没生效 / 线松 / USB 口换了 | `lsusb -t` 对比总线；`udevadm info -q property -n /dev/videoX` 拿 `ID_PATH`；必要时 `udevadm control --reload` + 重新插拔 |
+| `[WARN] dmesg 有 USB disconnect` | 5V 被拉塌（最常见：4G 棒插板子 USB） | 4G 只给笔记本供电；相机换到带电源 Hub 或另一条总线 |
+| `[FAIL] HTTP 000` | DNS/TCP/TLS 不通 | 确认「先 4G 上电、后开板子」；`nmcli con up "我是谁的Mate 60"` 切手机热点 |
+| `[FAIL] HTTP 401/403` | key 失效或地区门禁 | 换 key；或临时启用 `HTTPS_PROXY` 走代理 |
+| `[FAIL] HTTP 404` | 端点或模型名错 | `DASHSCOPE_MODEL=qwen3-vl-plus`，`BASE_URL` 用 compatible-mode/v1 |
+| `[WARN] 分辨率 800x480` | EDID 没读到，X 退到兜底模式 | `python tools/hdmi_watch.py --force-mode`；再不行重插 HDMI |
+| `[FAIL] /dev/ttyS0 权限不足` | 不在 `dialout` 组 | `sudo usermod -aG dialout $USER` 后重新登录（不是重启服务） |
+| `[WARN] 剩余 <1GB` / `[WARN] SoC ≥80°C` | 录像占满磁盘 / 散热不足 | 清 `capture/` 旧目录；查风扇与散热片（高温会降频，`a→v` 变慢） |
+| 五张视角图里 ⑤ 空/歪 | 镜子被碰过 | **物理调整镜子角度**，不要改 `DETECT_MIRROR_CROP` 去凑 |
+
+### 只有 12 分钟时的砍法
+
+按顺序只做四件，砍到哪算哪，后面全部放弃：
+冷启动到待机（3 分）→ `net_check` + `llm_probe --image`（3 分）→ 六路各出一张图 + ⑤ 目视（3 分）→ 3 件真货闭环（3 分）。
+这四件是「能不能跑」的下限；显示屏细节、盒满边界、断电重启都是「跑得好不好」，可以放弃。
+
+### 封车清单
+
+```bash
+bash tools/venue_check.sh                    # 必须 FAIL=0
+git log --oneline -1                          # 记录封存点
+dmesg | grep -c "USB disconnect"              # 和 T+0:12 对比，不许增长
+systemctl is-enabled wave-vision-llm          # 必须 enabled
+```
+
+- 断电重启一次，确认能自己回到待机（来不及就用 `systemctl restart`，但不等价）；
+- 记号笔 + 胶带标死六台相机与镜子的位置（封车后最怕被碰）；
+- `.env` 拷一份到 U 盘；拍机位全景、接线、屏幕待机三张照片；
+- 拔掉键盘鼠标，屏幕留黑；
+- **不要 stop 服务**：要让它停在「下次上电自动跑」的状态。
+
+### 这 30 分钟不要做的事
+
+- 不改 prompt / HSV 阈值 / 模型 / 温度：单件判错最多丢 1 件，改坏了是整场丢；
+- 不 `apt upgrade`、不改内核参数、不重装驱动；
+- 不为「某一类判错」现场调参（提示词已到天花板，见「已知坑」）；
+- 不反复重启服务「试试看」：每次冷启动 90~120 秒，三次就吃光一半时间；
+- 不把 4G 棒插到板子 USB 上（会拉塌 5V，相机反复重枚举）。
+
 ## 工具脚本（tools/）
 
 | 脚本 | 用途 |
@@ -1266,6 +1354,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
 | `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
 | `net_check.sh` | 启动前网络自检（出口 IP/国家、代理端口、key、模型可调用），退出码 = 不合格项数 |
+| `venue_check.sh` | **现场一键体检**：`.env` 污染 / 定案值 / 服务重启次数 / 上电到 ready 秒数 / 相机别名 / USB 掉线 / LLM 往返 / 分辨率 / 串口 / 磁盘与温度；只读，退出码 = 失败项数 |
 | `probe_openai_api.py` | 接口兼容性探针：`service_tier`、`reasoning`、缓存字段、真实请求块形状 |
 | `probe_model_classes.py` | 比对 `.rknn` 真实类别数与代码列表 |
 | `snap_views.py` | **现场拍五视角并存盘**（第 5 路自动走镜面裁剪），用于离线复现 |
