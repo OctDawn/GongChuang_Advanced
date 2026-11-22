@@ -4,7 +4,7 @@
 适用于「浙江省大学生工程实践与创新能力大赛·智能分拣赛项」。
 
 - **当前唯一入口**：`main_push_llm.py`（视觉大模型识别，本地 NPU 仅作可选回落）
-- **五路相机**：托盘广角 1 路 + 识别区**四路固定机位** 4 路（识别区已取消旋转）
+- **六路相机**：托盘广角 1 路 + 识别区**五路固定机位** 5 路（①②斜上、③正下仰视、④水平侧视、⑤镜面看死角；识别区已取消旋转）
 - **启动方式**：`bash deploy/start_vision.sh`（带四道就绪门禁），或手动 `python main_push_llm.py`
 - **开机自启**：`deploy/wave-vision-llm.service`（systemd）
 
@@ -22,7 +22,7 @@
 - [项目结构](#项目结构)
 - [当前流程](#当前流程) —— 串口协议 / 阶段编排 / 线程与故障处理
 - [视觉调参（离线调试）](#视觉调参离线调试) —— 不装机械也能跑通整条链路
-- [识别区四路机位（含回退三路）](#识别区四路机位含回退三路) —— 接线/带宽/对比/回退
+- [识别区五路机位（含回退三路）](#识别区五路机位含回退三路) —— 接线/带宽/对比/回退
 - [相机与设备别名（udev）](#相机与设备别名udev) —— 别名表 / 带宽 / **调试机位** / 换线流程
 - [运行前配置](#运行前配置) —— 环境 / `.env` / 图片链路 / 缓存 / 形状记忆
 - [部署与运行](#部署与运行) —— 服务与门禁 / 图形会话 / 代理 / 手动跑 / 自启开关 / 更新板端
@@ -34,6 +34,16 @@
 ## 更新记录
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
+
+**11/22 hrx（夜）**
+- 识别区定五路，⑤镜面补死角
+- ⑤ 须裁上 60% 再送识别
+- LLM 温度定 0，同图 5/5 一致
+- YOLO 颜色改框内 HSV 定色
+- 形状模型换 16 类 shape_best
+- 修 .env 行内注释污染配置值
+- YOLO 视角须全 5 路，砍路丢件
+- 棕橙加明度门限，修镜面翻棕
 
 **11/22 hrx**
 - 重训颜色/形状 YOLO，脚本入库
@@ -217,7 +227,7 @@
 
 ```text
 GongChuang_Advanced/
-├── main_push_llm.py             # 主入口（线下）：串口协议 + 阶段编排 + 逐件 4 视角识别
+├── main_push_llm.py             # 主入口（线下）：串口协议 + 阶段编排 + 逐件 5 视角识别
 ├── main_online.py               # 线上版1：整盘批量预判 + 固定取件顺序
 ├── main_online2.py              # 线上版2：单目 3 色 × 3 形（只开 1 路识别区相机）
 ├── test_llm.py                  # 离线测试（PC 上喂图片，不碰硬件）
@@ -232,7 +242,7 @@ GongChuang_Advanced/
 │   ├── online_batch.py          # 线上版1：6 类参考图 + 整盘一次识别（按取件顺序排序）
 │   ├── grid_recognition.py      # 线上版2：单目 3 色 × 3 形固定词表（9 类）
 │   ├── empty_examples.py        # 空场景图与带标签示例加载
-│   └── example/                 # 3 张空场景（托盘/顶部/底部）+ 11 张形状示例（顶部/底部成对）
+│   └── example/                 # 4 张空场景（托盘/顶部/底部/侧视）+ 16 张形状示例（含 ④侧视、⑤镜面）
 ├── yolo/                        # 本地 NPU 层（LLM 版按需使用）
 │   ├── inference_utils.py       # DetectRunner 与后处理、类别数防呆
 │   ├── fallback.py              # YOLO 回落（YOLO_FALLBACK=0 时不加载）
@@ -241,6 +251,7 @@ GongChuang_Advanced/
 ├── shared/
 │   ├── const.py                 # 全部常量（串口、摄像头、类别、裁剪比例）
 │   ├── common.py                # 摄像头、帧管理、串口、取帧重试、裁剪
+│   ├── color_hsv.py             # YOLO 兜底的框内 HSV 定色（阈值按实测标定）
 │   ├── show.py                  # pygame 全屏表格与待机黑屏
 │   └── screen.py                # xset 封装（关屏保 / DPMS）
 ├── models/                      # 4 个 RKNN 模型 + 类别 yaml
@@ -260,7 +271,7 @@ GongChuang_Advanced/
 
 ## 当前流程
 
-五路相机（托盘广角 1 + 识别区四路固定机位 4），视觉只做识别与显示，机械/电控负责动作。
+六路相机（托盘广角 1 + 识别区五路固定机位 5），视觉只做识别与显示，机械/电控负责动作。
 
 ### 串口协议
 
@@ -273,24 +284,25 @@ GongChuang_Advanced/
 | 视觉 → 电控 | `0` / `1~6` | 分类编号（0 = 无物体 / 失败 / 类别或盒已满） |
 | 视觉 → 电控 | `f` | 显示完成回执 |
 
-> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为四路固定机位、不再旋转。
+> `b`（转向完成）/ `r`（要求转向）是机械改造前的握手，**现已废弃**：识别区改为五路固定机位、不再旋转。
 > 收到 `b` 只记一条 debug 日志（不置位任何事件），`r` 已从代码里删除。
 
 ### 阶段编排
 
-1. 程序持续读取托盘广角与**识别区四路固定机位**（① ② 斜上方相对、③ 正下方仰视、④ 水平侧视），各自只保留最新一帧；
-   托盘与识别区① 另外录像（四路同时写 mp4 会抢 IO，要全录就再各建 writer）。
+1. 程序持续读取托盘广角与**识别区五路固定机位**（① ② 斜上方相对、③ 正下方仰视、④ 水平侧视、⑤ 镜面看死角），
+   各自只保留最新一帧；托盘与识别区① 另外录像（多路同时写 mp4 会抢 IO，要全录就再各建 writer）。
 2. **阶段 1**：同时监听 `c` 与 `a`。收到 `c` → 识别托盘各栏，回复 5 位 `1/0`；收到 `a` → 直接进入阶段 2。
-3. **阶段 2**：`a` 一到，从四路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，四路同时拍、
-   误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=4`）。
-4. 四张图一次性交给大模型，得到分类编号后回 `0` 或 `1~6`。
+3. **阶段 2**：`a` 一到，从五路机位各取一张「`a` 之后」的最新帧（先丢积压旧帧再取新帧，五路同时拍、
+   误差约 1 帧 ≈ 33ms），**全程没有 `r`/`b` 握手**（`STAGE_TWO_DETECTION_COUNT=5`）。
+4. ⑤ 只裁镜面上 60%（`DETECT_MIRROR_CROP=0,0,1,0.60`）后送出；五张图一次性交给大模型，得到分类编号后回 `0` 或 `1~6`。
 5. 电控动作完成发 `v` → 视觉先上屏，再回 `f`。
 6. 回到第 2 步，直到所有有物体的栏都推到底。
 
 > 兜底：LLM 超时或失败时回 `0`（不回落 YOLO，见下文 `YOLO_FALLBACK`）。查栏失败则保守回全 `1`。
 >
 > **图号 ↔ 机位是写死在 prompt 里的契约**：图1 = ①斜上、图2 = ②斜上、图3 = ③正下仰视、
-> 图4 = ④水平侧视（机位数 = `STAGE_TWO_DETECTION_COUNT`）。四台相机装错位置会让模型按错误的
+> 图4 = ④水平侧视、图5 = ⑤镜面（镜中是「从斜下方向上仰视」的像，方向与实物相反；机位数 = `STAGE_TWO_DETECTION_COUNT`）。
+> 相机装错位置会让模型按错误的
 > 视角关系推理（见「换 USB 口 / 换相机后怎么做」）。
 
 ### 多模型链（OpenAI → 千问 → YOLO）
@@ -369,7 +381,7 @@ python tools/llm_probe.py --image 某图.jpg              # 再发一次真实�
 所以图号顺序、裁剪、prompt、校验、形状记忆与线上完全一致——**离线跑出什么，线上就是什么**。
 
 ```bash
-# 一步到底：四路各拍一张 + 跑 1 次
+# 一步到底：五路各拍一张 + 跑 1 次
 python tools/offline_debug.py --capture
 
 # 拍一组，跑 3 次看稳定性和耗时分布
@@ -451,11 +463,26 @@ DETECT_CROP_MODE=full DETECT_SEND_MAX_SIDE=1280 LLM_MAX_SIDE=1280 python tools/o
 
 ---
 
-## 识别区四路机位（含回退三路）
+## 识别区五路机位（含回退三路）
 
-**现状：识别区是 4 路**（`STAGE_TWO_DETECTION_COUNT=4` 已是默认）：①② 斜上相对、③ 正下仰视、
-④ 水平侧视。④ 是用来补 ①② 的死角：45° 俯视会把两侧竖直面压扁，而 ④ 平视正对竖直面，
-对「薄壁开口 / 壁厚」这类判据是直接加分。
+**现状：识别区是 5 路**（`STAGE_TWO_DETECTION_COUNT=5`，`.env` 定案）：①② 斜上相对、③ 正下仰视、
+④ 水平侧视、⑤ 镜面看死角。
+
+- ④ 补的是 ①② 的竖直面死角：45° 俯视会把两侧竖直面压扁，平视正对后「薄壁开口 / 壁厚」才判得准。
+- ⑤ 是**对着镜面拍**，看到的是死角里的像。**必须只裁镜面上 60%**（`DETECT_MIRROR_CROP=0,0,1,0.60`）：
+  整图直送会把下半幅虚焦桶体当主体，3/3 判成实心 `cylinder`；裁上 60% 后 3/3 正确。
+- **不要为了提速把识别视角砍到 2 路**：2026-11-22 实测 ①② 两路会让形状全掉 `prism5_thinWalled`，
+  并且有一组图直接检不出（`classify()` 回 `None` → 主流程按「无物体」回 `0` 丢件）。
+  砍到 4 路（去掉 ⑤）也会让形状在部分件上退化成 `pyramid4`。**形状投票要全 5 路。**
+
+线下定案（2026-11-22）：
+
+| 变量 | 值 | 说明 |
+| --- | --- | --- |
+| `STAGE_TWO_DETECTION_COUNT` | `5` | 识别区机位数 |
+| `DETECT_MIRROR_VIEW_INDEX` | `5` | 第 5 路走镜面裁剪；`0` 关闭 |
+| `DETECT_MIRROR_CROP` | `0,0,1,0.60` | 左,上,右,下；只留镜面上 60% |
+| `LLM_TEMPERATURE` | `0` | 同一组图 5/5 输出一致（自洽性优先于准确率） |
 
 想退回 3 路：`.env` 里写 `STAGE_TWO_DETECTION_COUNT=3`，别名、图号、prompt 机位说明、
 形状记忆视角数全部自动跟着变，**代码一行不用改**。
@@ -463,7 +490,7 @@ DETECT_CROP_MODE=full DETECT_SEND_MAX_SIDE=1280 LLM_MAX_SIDE=1280 python tools/o
 ### 第 1 步：接线（先过带宽这一关）
 
 铁律：**每条 480M 总线最多 2 路 MJPG 流**（第 3 路 `STREAMON` 直接 `ENOSPC`）。
-现在是 5 路（托盘 + 4 路识别区），必须分散到 **≥3 条总线**（2+2+1 或 2+1+2）。
+现在是 6 路（托盘 + 5 路识别区），必须分散到 **≥3 条总线**（2+2+2）。
 
 ```bash
 lsusb -t          # ehci-platform 出现几次，就是几条独立 480M
@@ -499,8 +526,8 @@ ls -l /dev/wave/            # 应该多出 cam_detect_4
 ```bash
 sudo systemctl stop wave-vision-llm          # 相机被主程序占着
 
-# ① 四路（现在就是默认）
-python tools/offline_debug.py --capture --tag 四路对比 --runs 3
+# ① 五路（现在就是默认）
+python tools/offline_debug.py --capture --tag 五路对比 --runs 3
 
 # ② 同一组图的三路对照（只看前 3 张，不用重拍）
 STAGE_TWO_DETECTION_COUNT=3 python tools/offline_debug.py --latest --runs 3
@@ -565,13 +592,16 @@ ls -l /dev/wave/
 
 ### 带宽：每条 480M 总线最多 2 路
 
-现在是 **5 台相机（托盘 + 识别区 4 路）**，分在**三条独立总线**上（2+2+1）：
+现在是 **6 台相机（托盘 + 识别区 5 路）**，分在**三条独立总线**上（2+2+2）：
 
 ```
-Bus03 fc880000   ①斜上 + ③正下                    2 路
-Bus05 xhci 480M  托盘 + ②斜上   [USB3 口 Hub]      2 路
-Bus01 fc800000   ④平视 + 嵌套 Hub(ZTE 网卡)        1 路
+Bus03 fc880000   ①斜上 + ③正下                      2 路
+Bus05 xhci 480M  托盘 + ②斜上   [USB3 口 Hub]        2 路
+Bus01 fc800000   ④平视 + ⑤镜面 [嵌套 Hub(ZTE 网卡)]  2 路（已满）
 ```
+
+> **Bus01 已满**：④ 是未压缩 icspring，实测降到 **7.5fps**，⑤ 15fps，`fail=0`。每件只取 1 帧够用，
+> 但**不要再往这条总线加设备**；6 路并发上限约 14.7fps。
 
 每条（480M）只放得下约 **2 路** MJPG 流。第 3 路 `STREAMON` 会直接失败，dmesg 报：
 
@@ -616,7 +646,7 @@ sudo systemctl start wave-vision-llm
   窗口模式按键：`q`/`Esc` 退出、`s` 存快照、`o` 开关叠加框、`c` 开关分栏线。
 - 页面连不上（PC 与板子不同网段）就用 SSH 隧道：
   `ssh -L 8080:localhost:8080 orangepi@192.168.43.5`，再开 `http://localhost:8080/`。
-- 另外可用冒烟测试一次性验四路带宽：`python tools/probe_cameras.py`（走别名，四路各 90 帧）。
+- 另外可用冒烟测试一次性验五路带宽：`python tools/probe_cameras.py`（走别名，五路各 90 帧）。
 
 ### 换 USB 口 / 换相机后怎么做
 
@@ -631,7 +661,7 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=video4linux --action=add
 # 4) 验收：五个别名要指向真实采集节点（index0）
 ls -l /dev/wave/
-python tools/probe_cameras.py     # 四路 90/90 才算过
+python tools/probe_cameras.py     # 五路 90/90 才算过
 ```
 
 > ⚠️ **别名绑的是 USB 物理口，不是相机**。所以「换相机」= 把相机装到目标机位 + 插到该机位别名对应的口，
@@ -654,6 +684,12 @@ python main_push_llm.py
 ```
 
 ### `.env` 关键项
+
+> ⚠️ **等号右边只写值，注释必须单独占一行。** `shared/dotenv.py` **不剥行内注释**，
+> `KEY=1,2   # 说明` 会把 ` # 说明` 一起当成值：数值型变量 `int()`/`float()` 抛错后被静默吞掉
+> （例如 `YOLO_VIEW_INDICES` 静默退回「全部视角」），字符串型变量则把注释带进值里，**两种情况都不报错**。
+> 排查：`grep -nE "^[A-Za-z_]+=.+[[:space:]]#" .env`；验证某个值是否真的生效，用
+> `python -c "from shared.dotenv import load_dotenv; load_dotenv(); import shared.const as c; print(c.XXX)"`。
 
 | 变量 | 线上取值 | 说明 |
 | --- | --- | --- |
@@ -680,11 +716,11 @@ python main_push_llm.py
 | `DISPLAY_VIEW_INDEX` | 空（=0） | 显示屏「图片」列取哪个机位：`0`=①斜上（默认）、`1`=②斜上、`2`=③正下 |
 | `DETECT_CROP_MODE` | `full` | 送图方式：`full`=全幅等比缩放（**定版**）；`square`=居中方正 720→内缩 532（已退役，边角会被切掉）。**代码默认仍是 `square`，`.env` 不写就静默退回** |
 | `DETECT_SEND_MAX_SIDE` | `1024` | `full` 模式的长边上限（只缩不放）：`768` 更快 / `1024` 均衡 / `1280` 原图直发 |
-| `STAGE_TWO_DETECTION_COUNT` | 空（=4） | 识别区机位数，默认 4；写 `3` 退回三路（见「识别区四路机位」），会同时改取帧路数/prompt/记忆视角数 |
+| `STAGE_TWO_DETECTION_COUNT` | `5` | 识别区机位数（线下定案 5）；写 `3` 退回三路（见「识别区五路机位」），会同时改取帧路数/prompt/记忆视角数 |
 | `HTTPS_PROXY` / `HTTP_PROXY` | `http://127.0.0.1:7890` | **必须写进 `.env`**：systemd 不读 `.bashrc` |
 | `NO_PROXY` | `localhost,127.0.0.1,…` | 别把代理自己排除掉 |
 | `CAMERA_PALLET_ID` | 空（=别名） | 覆盖托盘相机路径，默认 `/dev/wave/cam_pallet` |
-| `CAMERA_DETECT_1/2/3/4` | 空（=别名） | 覆盖识别区四路，默认 `/dev/wave/cam_detect_1..4` |
+| `CAMERA_DETECT_1..5` | 空（=别名） | 覆盖识别区五路，默认 `/dev/wave/cam_detect_1..5` |
 
 改完重启生效：`sudo systemctl restart wave-vision-llm`（**不需要** daemon-reload）。
 
@@ -804,6 +840,18 @@ LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
 
 当前 `YOLO_FALLBACK=0`，这条路径**不加载也不执行**；置 `1` 才启用（同时会多加载 4 个 RKNN 模型）。
 
+识别区兜底的关键规则（2026-11-22 实测定案）：
+
+- **形状**：五路视角按置信度累计投票；`YOLO_VIEW_INDICES` 留空 = 全部参与，**不要砍**（见「识别区五路机位」实测）。
+- **颜色**：不用颜色模型输出，改在**形状框内统计 HSV 中位数**（`YOLO_COLOR_MODE=hsv`）。
+  颜色模型会把橙判 `brown`、淡紫判 `deep_blue`、浅色件直接检不出。
+- **棕/橙**：`brown` 需 `s<110` **且** `v<180`（棕是「又浊又暗」的暖色）。只按 `s` 会被 ⑤ 镜面
+  （`s=102~108`、`v=248`）洗成 brown，同一件货被拆进两个储物盒。
+- **颜色粗化**：`deep_blue→blue`、`deep_green→green`（`YOLO_COLOR_COARSE=1`），避免同类撕裂。
+- **贴纸**：默认不判（`YOLO_USE_LABELS=0`）。会把背景图案误报成 `qrcode/barcode`，比「少一种信息」更糟。
+- **调色工具**：`python tools/color_probe.py <图> [--box x1,y1,x2,y2]`。注意它检不到目标时会**静默回退画面中心 45%**
+  （1280×720 下像素恒为 `186624`），那时输出的是背景色，不能当颜色依据。
+
 ### YOLO 重训与 RKNN 转换（2026-11-22）
 
 训练/导出脚本都在 `tools/`，**不在板上跑**（需要 WSL + conda `rknn` 环境 + GPU）：
@@ -895,7 +943,7 @@ python tools/check_examples.py
 
 ## 线上赛段（整盘批量预判）
 
-线下逐件看 4 路；线上只要求“3 分钟内分完 24 件”，时间几乎全花在识别上。
+线下逐件看 5 路；线上只要求“3 分钟内分完 24 件”，时间几乎全花在识别上。
 所以线上单独一个入口，**串口/显示/阶段编排完全共用**，只换识别方式：
 
 ```bash
@@ -909,7 +957,7 @@ DISPLAY=:0 python main_online.py
    （`lane` 降序 + `y` 升序，**由程序排序**，不依赖模型输出顺序）；
 3. 之后每来一个 `a` 直接出队回类别（约 0.1s），**不再调识别区**；
    `v` 到了照常上屏并回 `f`；
-4. 队列空 / 批量失败 / 某件没匹配到类别 → **自动回退逐件 4 视角**（只是慢，不会错乱）。
+4. 队列空 / 批量失败 / 某件没匹配到类别 → **自动回退逐件 5 视角**（只是慢，不会错乱）。
 
 时间账：整盘一次 5~9 秒，之后每件只剩机械节拍。24 件 ≈ 6~9s + 24×节拍。
 
@@ -981,7 +1029,7 @@ DISPLAY=:0 python main_online2.py
 
 | | 线下 | 线上版1 | 线上版2 |
 | --- | --- | --- | --- |
-| 输入 | 4 视角 | 1 张托盘俯视 | **1 视角** |
+| 输入 | 5 视角 | 1 张托盘俯视 | **1 视角** |
 | 判别方式 | 词表 + 形状记忆 | 6 张参考图比对 | **3 色 × 3 形固定词表** |
 | 单件耗时 | 4~6s | 首个 `c` 5~9s，之后 0.1s | ~1.5~3s |
 | 贴纸 | 参与分类 | 忽略 | **忽略** |
@@ -1007,7 +1055,7 @@ python tools/grid_check.py --tag 红正方体
 `capture/grid_check/<时间戳>/`，方便核对裁剪和取景。
 
 > ⚠️ 用 systemd 起时，`start_vision.sh` 按 `.env` 的 `STAGE_TWO_DETECTION_COUNT`
-> 等相机别名；届时要把该值也写成 `1`，否则门禁会等四路。手动跑本入口不受影响。
+> 等相机别名；届时要把该值也写成 `1`，否则门禁会等五路。手动跑本入口不受影响。
 
 ---
 
@@ -1143,7 +1191,7 @@ ls -l /dev/wave/                                          # 五个别名在不�
 v4l2-ctl --list-devices                                   # 相机枚举（注意别把 video-dec0/enc0 当相机）
 lsusb -t                                                  # 几条总线、相机分别挂在哪
 sudo dmesg | tail -40 | grep -iE 'uvc|bandwidth|ENOSPC|reset'
-python tools/probe_cameras.py                             # 四路各 90 帧的冒烟测试
+python tools/probe_cameras.py                             # 五路各 90 帧的冒烟测试
 ```
 
 已知坑：
@@ -1209,10 +1257,10 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 
 | 脚本 | 用途 |
 | --- | --- |
-| `offline_debug.py` | **离线调参主力**：四路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
+| `offline_debug.py` | **离线调参主力**：五路拍照 + 现有 prompt + 计时/用量记录（见「视觉调参」） |
 | `online_check.py` | **线上版1 联调**：拍一张托盘图 → 整盘批量识别 → 打印顺序/类别，并保存标注图 |
 | `grid_check.py` | **线上版2 联调**：拍一张识别区图 → 判断颜色+形状（3×3），保存原图/送图/结果 |
-| `probe_cameras.py` | **相机冒烟测试**：四路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
+| `probe_cameras.py` | **相机冒烟测试**：五路同时开 + 并行连读 + 各存一张 jpg（走别名；`--devices` 可显式指定） |
 | `preview_camera.py` | **相机预览 + 几何叠加**（调机位用）；`--camera pallet/detect_up1/detect_up2/detect_down/detect_side`，`--http 8080` 可 PC 浏览器看 MJPEG，`--tray` 画裁剪框（跟随 `DETECT_CROP_MODE`） |
 | `capture.py` | 抽帧 / 录像；`CAMERA_TYPE` 可设 `pallet`/`detect_up1`/`detect_up2`/`detect_down`（改文件顶部那一行） |
 | `set_empty_reference.py` | 替换空场景参考图（校验必须是未裁剪原图） |
@@ -1220,6 +1268,10 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 | `net_check.sh` | 启动前网络自检（出口 IP/国家、代理端口、key、模型可调用），退出码 = 不合格项数 |
 | `probe_openai_api.py` | 接口兼容性探针：`service_tier`、`reasoning`、缓存字段、真实请求块形状 |
 | `probe_model_classes.py` | 比对 `.rknn` 真实类别数与代码列表 |
+| `snap_views.py` | **现场拍五视角并存盘**（第 5 路自动走镜面裁剪），用于离线复现 |
+| `color_probe.py` | **HSV 定色调参**：打印框 / 中位 HSV / 判定色。⚠️ 检不到目标时会静默回退画面中心 45%，那时输出的是背景色 |
+| `yolo_single.py` | 单模型单图：打印类别/分数/框（`--model-path` 可换模型） |
+| `yolo_check.py` | 整套 YOLO 兜底离线跑；`--views 1,2,3,4` 只投指定视角（需同时把 `YOLO_VIEW_INDICES` 置空，否则会二次筛选） |
 | `hdmi_watch.py` | HDMI/DP EDID 与模式看门狗（`--once` 体检、`--force-mode` 钉模式） |
 | `hdmi_health.py` | HDMI 链路体检，`--fix` 触发重协商 |
 | `probe_display.py` | 显示层体检（xrandr / EDID / 字体） |
@@ -1232,7 +1284,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 ### 常用：相机
 
 ```bash
-python tools/probe_cameras.py                                  # 走别名，验四路带宽
+python tools/probe_cameras.py                                  # 走别名，验五路带宽
 python tools/preview_camera.py --camera detect_up1 --http 8080 --tray
 # 只想单独测某几路：--devices 要 4 个参数，拿不存在的节点占位即可（占位会被跳过）
 python tools/probe_cameras.py --devices /dev/video0 /dev/video4 /dev/none /dev/none
@@ -1241,7 +1293,7 @@ python tools/probe_cameras.py --devices /dev/video0 /dev/video4 /dev/none /dev/n
 ### 离线测试（PC，无需硬件）
 
 ```bash
-python test_llm.py classify <图1> <图2> <图3> <图4>   # 四路分类（个数 = STAGE_TWO_DETECTION_COUNT）
+python test_llm.py classify <图1> <图2> <图3> <图4> <图5>   # 五路分类（个数 = STAGE_TWO_DETECTION_COUNT）
 python test_llm.py pallet   <托盘俯视图>            # 查栏
 python tools/check_examples.py                      # 示例图自检
 ```
