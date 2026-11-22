@@ -1291,6 +1291,8 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
   `!! 没读到 HTTPS_PROXY` 是预期输出；
 - 还会等 X 显示最多 60 秒；相机别名最多 60 秒；真实 API 往返不通过时会**最多重试 300 秒**；
 - 所以冷启动正常是 **90~120 秒**。脚本会打印「上电后 Xs 进入 active」，以那个数为准。
+  **若这个数远大于 300s**，说明服务是开机后你手动重启的（`ActiveEnterTimestamp` 跟着更新了），
+  不代表冷启动；要拿真实数字就 `reboot` 后立刻重跑脚本——顺便验证了「断电后能自启」。
 
 ### 检查项 → 失败原因 → 修复
 
@@ -1309,7 +1311,8 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 | `[FAIL] HTTP 404` | 端点或模型名错 | `DASHSCOPE_MODEL=qwen3-vl-plus`，`BASE_URL` 用 compatible-mode/v1 |
 | `[WARN] 分辨率 800x480` | EDID 没读到，X 退到兜底模式 | `python tools/hdmi_watch.py --force-mode`；再不行重插 HDMI |
 | `[FAIL] /dev/ttyS0 权限不足` | 不在 `dialout` 组 | `sudo usermod -aG dialout $USER` 后重新登录（不是重启服务） |
-| `[WARN] 剩余 <1GB` / `[WARN] SoC ≥80°C` | 录像占满磁盘 / 散热不足 | 清 `capture/` 旧目录；查风扇与散热片（高温会降频，`a→v` 变慢） |
+| `[WARN] SoC ≥80°C` | 散热不足，高温会降频（`a→v` 直接变慢） | 先看 `dmesg \| grep -i throttl`；加 **5V 风扇（独立供电，别从板子 USB 取）** 对着散热片吹；别让布/车体挡住进风口、别晒阳光。现场测法：跑 5 件前后各读一次 `tools/venue_check.sh` 或 `/sys/class/thermal/thermal_zone0/temp` |
+| `[..] capture/ 占用` 超过 10GB | 旧录像占盘且拖慢 IO | `du -sh capture/* \| sort -h \| tail` 看日期，只留最近两次（赛前留证据），其余 `rm -rf capture/20261118_*` 这类旧目录 |
 | 五张视角图里 ⑤ 空/歪 | 镜子被碰过 | **物理调整镜子角度**，不要改 `DETECT_MIRROR_CROP` 去凑 |
 
 ### 只有 12 分钟时的砍法

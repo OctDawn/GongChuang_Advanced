@@ -168,8 +168,11 @@ if command -v systemctl >/dev/null 2>&1; then
         ''|0) : ;;
         *)
             READY_S="$(awk -v us="$ACT_US" 'BEGIN{printf "%.0f", us/1000000}')"
-            if [ "${READY_S:-0}" -gt 0 ]; then
-                info "上电后 ${READY_S}s 进入 active（冷启动参考值；等相机/代理/X 都在里面）"
+            if [ "${READY_S:-0}" -gt 300 ]; then
+                warn "服务是上电后 ${READY_S}s 才 active 的（>300s：多半是后来手动重启，不代表冷启动）" \
+                     '想量真实冷启动：reboot 后立刻重跑本脚本，正常 90~120s'
+            elif [ "${READY_S:-0}" -gt 0 ]; then
+                info "上电后 ${READY_S}s 进入 active（冷启动参考值，正常 90~120s）"
             fi
             ;;
     esac
