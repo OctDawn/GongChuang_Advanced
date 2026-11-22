@@ -1265,6 +1265,7 @@ journalctl -u mihomo -n 40 --no-pager | grep 'dns resolve failed'   # 6 节点�
 ```bash
 cd ~/WaveRider_GongChuang_Vision
 bash tools/venue_check.sh               # 只读，约 15 秒；退出码 = 失败项数（0 = 可以封车）
+bash tools/venue_check.sh --wait-ready  # 先等主程序就绪再体检（量真实冷启动；reboot 后用这个）
 bash tools/venue_check.sh --cameras     # 额外逐路取帧（会占用相机，先 systemctl stop）
 bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 ```
@@ -1290,9 +1291,12 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 - `start_vision.sh` 会先等 `127.0.0.1:7890` 最多 **30 秒**（即使 `HTTPS_PROXY` 已注释掉），日志里两行
   `!! 没读到 HTTPS_PROXY` 是预期输出；
 - 还会等 X 显示最多 60 秒；相机别名最多 60 秒；真实 API 往返不通过时会**最多重试 300 秒**；
-- 所以冷启动正常是 **90~120 秒**。脚本会打印「上电后 Xs 进入 active」，以那个数为准。
-  **若这个数远大于 300s**，说明服务是开机后你手动重启的（`ActiveEnterTimestamp` 跟着更新了），
-  不代表冷启动；要拿真实数字就 `reboot` 后立刻重跑脚本——顺便验证了「断电后能自启」。
+- 所以冷启动正常是 **60~120 秒**。判断依据是主程序打出的日志「等待 c（查栏）或 a（开始下一轮）」，
+  它出现在相机打开 / 预热 / 显示线程之后；脚本也是拿这条日志算的。
+- **不要看 `systemctl status` 里的 active 时间**：`Type=simple` 下服务在 fork 的瞬间就 active（实测 13s），
+  那时相机还没开、预热也没做，会把冷启动误判成 13 秒。
+- 最直接的办法：`sudo reboot` → `bash tools/venue_check.sh --wait-ready`，它会等到就绪并报出真实秒数，
+  顺便验证了「断电后能自启」。若报出的数字远大于 300s，说明服务是后来手动重启的，不是冷启动。
 
 ### 检查项 → 失败原因 → 修复
 
@@ -1309,11 +1313,15 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 | `[FAIL] HTTP 000` | DNS/TCP/TLS 不通 | 确认「先 4G 上电、后开板子」；`nmcli con up "我是谁的Mate 60"` 切手机热点 |
 | `[FAIL] HTTP 401/403` | key 失效或地区门禁 | 换 key；或临时启用 `HTTPS_PROXY` 走代理 |
 | `[FAIL] HTTP 404` | 端点或模型名错 | `DASHSCOPE_MODEL=qwen3-vl-plus`，`BASE_URL` 用 compatible-mode/v1 |
-| `[WARN] 分辨率 800x480` | EDID 没读到，X 退到兜底模式 | `python tools/hdmi_watch.py --force-mode`；再不行重插 HDMI |
+| `[WARN] 分辨率 800x480` | EDID 没读到，X 退到兜底模式（表格会串行/截断） | **持久修：**`systemctl is-enabled wave-hdmi-watch`；没开就 `sudo systemctl enable --now wave-hdmi-watch`（它带 `--force-mode 1920x1080`，每次开机/重新握手都自修）。临时救：`python tools/hdmi_watch.py --force-mode`；仍不行重插 HDMI |
 | `[FAIL] /dev/ttyS0 权限不足` | 不在 `dialout` 组 | `sudo usermod -aG dialout $USER` 后重新登录（不是重启服务） |
 | `[WARN] SoC ≥80°C` | 散热不足，高温会降频（`a→v` 直接变慢） | 先看 `dmesg \| grep -i throttl`；加 **5V 风扇（独立供电，别从板子 USB 取）** 对着散热片吹；别让布/车体挡住进风口、别晒阳光。现场测法：跑 5 件前后各读一次 `tools/venue_check.sh` 或 `/sys/class/thermal/thermal_zone0/temp` |
 | `[..] capture/ 占用` 超过 10GB | 旧录像占盘且拖慢 IO | `du -sh capture/* \| sort -h \| tail` 看日期，只留最近两次（赛前留证据），其余 `rm -rf capture/20261118_*` 这类旧目录 |
 | 五张视角图里 ⑤ 空/歪 | 镜子被碰过 | **物理调整镜子角度**，不要改 `DETECT_MIRROR_CROP` 去凑 |
+
+> 温度基线（2026-11-22 22:21，六路相机常开 + 显示、未跑件）：soc 73 / bigcore 74 / littlecore 74 /
+> GPU 71 / NPU 72 °C，`dmesg` 无 throttling 记录。整轮跑起来后会再高 5~10°C，
+> **封车前必须做一次满载读数**（跑 5 件前后各读一次），只看空载会低估。
 
 ### 只有 12 分钟时的砍法
 
@@ -1328,6 +1336,7 @@ bash tools/venue_check.sh                    # 必须 FAIL=0
 git log --oneline -1                          # 记录封存点
 dmesg | grep -c "USB disconnect"              # 和 T+0:12 对比，不许增长
 systemctl is-enabled wave-vision-llm          # 必须 enabled
+systemctl is-enabled wave-hdmi-watch          # 必须 enabled，否则第二天上电又是 800x480
 ```
 
 - 断电重启一次，确认能自己回到待机（来不及就用 `systemctl restart`，但不等价）；

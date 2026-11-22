@@ -3,6 +3,7 @@
 #
 # 用法（项目根目录）：
 #   bash tools/venue_check.sh                 # 全部被动检查，约 10~20 秒
+#   bash tools/venue_check.sh --wait-ready    # 先等主程序打出「等待 c/a」再体检（量真实冷启动）
 #   bash tools/venue_check.sh --cameras       # 额外逐路取帧（会占用相机，先 systemctl stop）
 #   bash tools/venue_check.sh --no-net        # 跳过网络/API 往返（没网时用）
 #   bash tools/venue_check.sh --help
@@ -20,9 +21,11 @@ cd "$ROOT" || exit 1
 
 WITH_CAMS=0
 WITH_NET=1
+WAIT_READY=0
 for arg in "$@"; do
     case "$arg" in
         --cameras) WITH_CAMS=1 ;;
+        --wait-ready) WAIT_READY=1 ;;
         --no-net)  WITH_NET=0 ;;
         -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) printf '未知参数: %s（用 --help 看用法）\n' "$arg"; exit 2 ;;
@@ -55,6 +58,31 @@ printf ' 现场体检  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 printf ' 项目根    %s\n' "$ROOT"
 printf ' 上电时长  %s 秒\n' "$(cut -d. -f1 /proc/uptime 2>/dev/null || echo '?')"
 printf '%s\n' "=============================================="
+
+# 就绪标记：主程序进入主循环时打的那行日志「等待 c（查栏）或 a（开始下一轮）」，
+# 它在相机打开 / LLM 预热 / 显示线程之后才出现，是真正的就绪点。
+app_ready() {
+    journalctl -u wave-vision-llm -b -o short-unix --no-pager 2>/dev/null \
+        | grep -q '等待 c'
+}
+
+if [ "$WAIT_READY" = "1" ]; then
+    info '等主程序就绪（最多 180s，等日志「等待 c/a」）…'
+    T0="$(cut -d. -f1 /proc/uptime)"
+    while :; do
+        if app_ready; then
+            NOW_S="$(cut -d. -f1 /proc/uptime)"
+            ok "上电后 ${NOW_S}s 主程序就绪（本次等了 $((NOW_S - T0))s）"
+            break
+        fi
+        NOW_S="$(cut -d. -f1 /proc/uptime)"
+        if [ $((NOW_S - T0)) -ge 180 ]; then
+            bad '等了 180s 仍未就绪' 'journalctl -u wave-vision-llm -b --no-pager | tail -40，看卡在哪一道门'
+            break
+        fi
+        sleep 2
+    done
+fi
 
 # ────────────────────────────────────────────────────────────
 section '1. 配置（.env）'
@@ -162,20 +190,29 @@ if command -v systemctl >/dev/null 2>&1; then
         bad "NRestarts=$NR（服务在反复重启）" "看 journal：多半是相机别名缺失或 X 没起来"
     fi
 
-    # 上电后多少秒进入 active：这是冷启动的真实耗时，按它安排现场节奏
-    ACT_US="$(systemctl show -p ActiveEnterTimestampMonotonic --value wave-vision-llm 2>/dev/null || echo 0)"
-    case "$ACT_US" in
-        ''|0) : ;;
-        *)
-            READY_S="$(awk -v us="$ACT_US" 'BEGIN{printf "%.0f", us/1000000}')"
-            if [ "${READY_S:-0}" -gt 300 ]; then
-                warn "服务是上电后 ${READY_S}s 才 active 的（>300s：多半是后来手动重启，不代表冷启动）" \
-                     '想量真实冷启动：reboot 后立刻重跑本脚本，正常 90~120s'
-            elif [ "${READY_S:-0}" -gt 0 ]; then
-                info "上电后 ${READY_S}s 进入 active（冷启动参考值，正常 90~120s）"
-            fi
-            ;;
-    esac
+    # 真实就绪：主程序打出「等待 c（查栏）或 a（开始下一轮）」那一刻。
+    # 不能用 ActiveEnterTimestamp：Type=simple 下它在 fork 瞬间就置位（实测 13s），
+    # 那时相机还没开、预热也没做，会让人误判「冷启动很快」。
+    READY_TS="$(journalctl -u wave-vision-llm -b -o short-unix --no-pager 2>/dev/null \
+        | grep -m1 '等待 c' | awk '{printf "%d", $1}')"
+    BOOT_EPOCH=$(( $(date +%s) - $(cut -d. -f1 /proc/uptime) ))
+    if [ -n "${READY_TS:-}" ] && [ "${READY_TS:-0}" -gt "$BOOT_EPOCH" ]; then
+        READY_S=$(( READY_TS - BOOT_EPOCH ))
+        if [ "$READY_S" -gt 300 ]; then
+            warn "上电后 ${READY_S}s 主程序才就绪（>300s：多半是后来手动重启，不代表冷启动）" \
+                 'reboot 后加 --wait-ready 重跑，拿真实数字'
+        else
+            ok "上电后 ${READY_S}s 主程序就绪（日志「等待 c/a」；正常 60~120s）"
+        fi
+    else
+        UPTIME_S="$(cut -d. -f1 /proc/uptime)"
+        if [ "${UPTIME_S:-0}" -lt 150 ]; then
+            info "刚上电 ${UPTIME_S}s，主程序还没打出「等待 c/a」（预热中）；加 --wait-ready 可等到它"
+        else
+            warn '日志里找不到「等待 c（查栏）或 a（开始下一轮）」' \
+                 'journalctl -u wave-vision-llm -b --no-pager | tail -40 看卡在哪'
+        fi
+    fi
 else
     warn '没有 systemctl（不是板子？）' '这条检查只在板端有意义'
 fi
@@ -275,7 +312,8 @@ if command -v xrandr >/dev/null 2>&1; then
         if [ "${W:-0}" -ge 1024 ] 2>/dev/null; then
             ok "显示已连接，分辨率 $RES"
         else
-            warn "分辨率 $RES 偏低（EDID 没读到会退到 800x480）" 'python tools/hdmi_watch.py --force-mode'
+            warn "分辨率 $RES 偏低（EDID 没读到会退到 800x480，表格会串/截断）" \
+                 '确认看门狗：systemctl is-enabled wave-hdmi-watch；没开就 sudo systemctl enable --now wave-hdmi-watch'
         fi
     else
         bad "DISPLAY=${DISPLAY:-:0} 上读不到显示" '确认已登录图形会话；或 xrandr 用对 DISPLAY'
