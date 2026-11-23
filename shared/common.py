@@ -17,7 +17,7 @@ import serial
 
 from shared.const import (
     SERIAL_PORT, BAUDRATE, MAX_TEMP_CATEGORIES, MAX_ITEMS_PER_CATEGORY,
-    COLUMN_COUNT, TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX,
+    COLUMN_COUNT, COLUMN_X_MIN, COLUMN_X_MAX, TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX,
     LASER_SENSOR_ON_LEFT,
     PALLET_LLM_INSET, DETECT_LLM_INSET, FRAME_RETRY_TIMES,
     DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
@@ -552,9 +552,24 @@ def crop_detect_for_view(frame, view_index):
 
 # ---- 托盘几何（YOLO 查栏用） ----
 def tray_bounds_px(frame_shape):
-    """把托盘范围常量（相对画面比例）换算成画面像素边界。"""
+    """把托盘范围常量（相对画面比例）换算成画面像素边界。
+
+    注意：这是「送大模型裁剪」的范围（crop_tray_region 用的也是这套）。
+    判栏请用 column_bounds_px()——两者已拆开，因为右边界需要独立校准。
+    """
     height, width = frame_shape[:2]
     return (TRAY_X_MIN * width, TRAY_X_MAX * width,
+            TRAY_Y_MIN * height, TRAY_Y_MAX * height)
+
+
+def column_bounds_px(frame_shape):
+    """栏网格的像素边界：x 用 COLUMN_X_*，y 仍用托盘范围（只用于判断是否在盘内）。
+
+    为何 x 不用 TRAY_*：实测托盘右边界包含右侧墙（1052 vs 1093），会把第 5 栏撑宽，
+    而 TRAY_* 又兼作送图裁剪，不能直接改。详见 shared/const.py 的注释。
+    """
+    height, width = frame_shape[:2]
+    return (COLUMN_X_MIN * width, COLUMN_X_MAX * width,
             TRAY_Y_MIN * height, TRAY_Y_MAX * height)
 
 
@@ -577,7 +592,7 @@ def column_occupancy(points, frame_shape, column_count=COLUMN_COUNT):
     occupancy = [False] * column_count
     if points is None or len(points) == 0:
         return occupancy
-    x_min, x_max, y_min, y_max = tray_bounds_px(frame_shape)
+    x_min, x_max, y_min, y_max = column_bounds_px(frame_shape)
     for box in points:
         center_x = float(np.mean(box[:, 0]))
         center_y = float(np.mean(box[:, 1]))

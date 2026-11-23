@@ -54,6 +54,7 @@ from shared.const import (  # noqa: E402
     PALLET_WIDTH, PALLET_HEIGHT, PALLET_FPS,
     DETECT_WIDTH, DETECT_HEIGHT, DETECT_FPS,
     TRAY_X_MIN, TRAY_X_MAX, TRAY_Y_MIN, TRAY_Y_MAX, COLUMN_COUNT,
+    COLUMN_X_MIN, COLUMN_X_MAX,
     DETECT_LLM_INSET, DETECT_CROP_MODE, DETECT_SEND_MAX_SIDE, DETECT_FULL_INSET,
 )
 
@@ -111,7 +112,11 @@ def put(image, text, org, color=(0, 255, 255), scale=0.6, thickness=1):
 
 
 def draw_pallet_overlay(frame, tray=True, columns=False):
-    """（可选）红色托盘框 +（可选）5 栏分栏线（与 column_occupancy 一致：托盘框内均分）。"""
+    """（可选）红框=托盘裁剪范围；（可选）黄线+序号=判栏用的栏网格。
+
+    两者可能不一致：托盘右边界含右侧墙，栏网格已单独校准（COLUMN_X_*）。
+    这里把两套都画出来，调机位时能一眼看出偏差。
+    """
     height, width = frame.shape[:2]
     x0, x1 = int(TRAY_X_MIN * width), int(TRAY_X_MAX * width)
     y0, y1 = int(TRAY_Y_MIN * height), int(TRAY_Y_MAX * height)
@@ -119,12 +124,14 @@ def draw_pallet_overlay(frame, tray=True, columns=False):
         cv2.rectangle(frame, (x0, y0), (x1, y1), (0, 0, 255), 2)
     if not columns:
         return frame
-    span = x1 - x0
+    cx0, cx1 = int(COLUMN_X_MIN * width), int(COLUMN_X_MAX * width)
+    span = cx1 - cx0
+    cv2.rectangle(frame, (cx0, y0), (cx1, y1), (0, 255, 255), 1)
     for index in range(1, COLUMN_COUNT):
-        x = x0 + int(span * index / COLUMN_COUNT)
+        x = cx0 + int(span * index / COLUMN_COUNT)
         cv2.line(frame, (x, y0), (x, y1), (0, 255, 255), 1)
     for index in range(COLUMN_COUNT):
-        cx = x0 + int(span * (index + 0.5) / COLUMN_COUNT)
+        cx = cx0 + int(span * (index + 0.5) / COLUMN_COUNT)
         put(frame, str(index + 1), (cx - 8, y0 + 28), (0, 255, 255), 0.8, 2)
     return frame
 
