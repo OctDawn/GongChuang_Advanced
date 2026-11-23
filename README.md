@@ -1,4 +1,4 @@
-﻿# Orange Pi 视觉分拣程序（LLM 版）
+# Orange Pi 视觉分拣程序（LLM 版）
 
 在 Orange Pi 5 Pro（RK3588S，Ubuntu 22.04）上跑视觉识别，通过串口与电控通信，由显示屏呈现分拣结果。
 适用于「浙江省大学生工程实践与创新能力大赛·智能分拣赛项」。
@@ -35,6 +35,12 @@
 ## 更新记录
 
 > 规则：每条不超过 20 字，写清「谁改的、改了什么」，倒序排列。
+
+**11/23 Chatbox（晚）**
+- 形状模型换回 shape_best
+- 删 7 个一次性调试脚本
+- models/ 与板上对齐并写进文档
+- 加现场体检脚本 venue_check
 
 **11/23 Chatbox**
 - capture 照片粗打标 797 张
@@ -876,8 +882,33 @@ LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
 产物**不入库**：`runs/`、`weights/`、`yolo_full/`、`yolo_offline_dataset/`、`models_new/`
 （已加入 `.gitignore`）。入库的只有 `models/*.rknn`（部署用）和 `models/*_data.yaml`（类别名参考）。
 
-2026-11-22 更新：`shape_detect_area.rknn`、`color_detect_area.rknn` 各约 **20.9 MB**（旧版 7.3 MB
-已存为 `.bak`），输入仍为 640×640。**接入前必须先跑 `tools/probe_model_classes.py`** 校验类别数与顺序。
+2026-11-23 更新：`models/` 以**板上实际在跑的那份**为准（曾不一致过，见下）。
+
+| 文件 | 大小 | 用途 |
+| --- | --- | --- |
+| `shape_detect_area.rknn` | **6.98 MB** | 形状，= `models_try/shape_best.rknn`（16 类），板上实测 3/3 |
+| `color_detect_area.rknn` | 19.95 MB | 颜色（YOLO 兜底用；主链路颜色靠千问） |
+| `label_detect_area.rknn` | 6.97 MB | 贴纸定位 |
+| `color_large_pallet.rknn` | 6.97 MB | 托盘查栏兜底 |
+
+类别数与顺序以同目录的 `*_data.yaml` 为准；**接入前必须跑 `tools/probe_model_classes.py`**。
+
+> ⚠️ **模型一致性铁律：PC 的 `models/` 必须和板上逐字节一致。**
+> 2026-11-23 查到的真实事故：PC 的 `shape_detect_area.rknn` 是 **20 MB 的 yolo11s 版**
+> （md5 `74C04650…`），而板上跑的是 **6.98 MB 的 shape_best**（md5 `F8510C94…`）；
+> 那版 yolo11s 在真实图上形状全错。若当时直接 `scp models/` 到板子，会把好的覆盖成坏的。
+> 旧版已归档到 `models_try/shape_detect_area_yolo11s_20MB.rknn`（未入库，`*.rknn` 里只有 `models/` 的入库）。
+>
+> 同步前先对哈希：
+>
+> ```bash
+> # 板上
+> md5sum models/*.rknn
+> ```
+> ```powershell
+> # PC
+> Get-FileHash D:\GongChuang_Advanced\models\*.rknn -Algorithm MD5
+> ```
 
 ### 形状记忆（仅本次运行）
 
