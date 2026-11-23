@@ -36,3 +36,7 @@ models_new/
 *.rknn.bak
 *.pt
 *.onnx
+
+# ---- 粗打标产物（体积大，不入库） ----
+capture_labels/
+capture_labels_export.zip
