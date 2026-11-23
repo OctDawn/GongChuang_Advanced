@@ -41,6 +41,8 @@
 - 删 7 个一次性调试脚本
 - models/ 与板上对齐并写进文档
 - 加现场体检脚本 venue_check
+- 加离屏表格渲染工具
+- 实测 800x480 排版会崩
 
 **11/23 Chatbox**
 - capture 照片粗打标 797 张
@@ -1317,7 +1319,7 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 | 0~3 | 上电顺序 + 冷启动 | 先 4G 上电等热点，再开板子；`bash tools/venue_check.sh --no-net` | 屏幕纯黑待机、`NRestarts=0` |
 | 3~7 | 网络与 API | `bash tools/net_check.sh; echo $?` + `python tools/llm_probe.py --image capture/views/20261119_220300_五视角_通心筒/view_1.jpg` | 两个退出码都是 0 |
 | 7~12 | 六路相机 | `ls -l /dev/wave/` + `--cameras` + `python tools/snap_views.py` | 6/6 别名、各 30/30 帧、五张图逐张目视（⑤ 裁后必须框住死角） |
-| 12~15 | 显示屏 | `python tools/probe_display.py` + `python tools/hdmi_watch.py --once` | 白底黑字 6 行、图片列有图、分辨率不掉到 800×480 |
+| 12~15 | 显示屏 | `python tools/probe_display.py` + `python tools/hdmi_watch.py --once`；没电控时用 `python tools/render_table_offline.py` 验排版 | 白底黑字 6 行、图片列有图、分辨率不掉到 800×480 |
 | 15~18 | 与电控对协议 | 串口工具看原始字节 | `c`→5 位 `1/0`、`a`→`1~6`、`v`→先上屏再回 `f` |
 | 18~24 | 真货闭环（至少 3 件） | 走 `a → 识别 → v → 显示` | `a→v` 3.2~3.6s、编号与盒对应 |
 | 24~27 | 两个致命边界 | 连推 5 件同类；`v` 早于类别 | 第 5 件回 `0` 不卡流程；不死锁不错位 |
@@ -1350,7 +1352,7 @@ bash tools/venue_check.sh --no-net      # 没网时跳过 API 往返
 | `[FAIL] HTTP 000` | DNS/TCP/TLS 不通 | 确认「先 4G 上电、后开板子」；`nmcli con up "我是谁的Mate 60"` 切手机热点 |
 | `[FAIL] HTTP 401/403` | key 失效或地区门禁 | 换 key；或临时启用 `HTTPS_PROXY` 走代理 |
 | `[FAIL] HTTP 404` | 端点或模型名错 | `DASHSCOPE_MODEL=qwen3-vl-plus`，`BASE_URL` 用 compatible-mode/v1 |
-| `[WARN] 分辨率 800x480`（EDID 正常） | 冷启动时 X 先按 800x480 的兜底时序配对；**旧版看门狗只在「断→连」时重同步**，从开机就 connected 的路径没人修（日志里只有一行「看门狗启动」就再无动静） | 同步新版 `tools/hdmi_watch.py`（启动即体检 + 每 2 秒复查降级）后 `sudo systemctl restart wave-hdmi-watch`；日志应出现 `[模式] DP-1 当前 800x480，钉回 1920x1080`。注意 `--once` 只报不修，新版会把「模式降级」报成异常 |
+| `[WARN] 分辨率 800x480`（EDID 正常） | 冷启动时 X 先按 800x480 的兜底时序配对；**旧版看门狗只在「断→连」时重同步**，从开机就 connected 的路径没人修（日志里只有一行「看门狗启动」就再无动静） | 同步新版 `tools/hdmi_watch.py`（启动即体检 + 每 2 秒复查降级）后 `sudo systemctl restart wave-hdmi-watch`；日志应出现 `[模式] DP-1 当前 800x480，钉回 1920x1080`。注意 `--once` 只报不修，新版会把「模式降级」报成异常。**排版到底差多少**：`python tools/render_table_offline.py --size 800x480`（实测标题「分拣结果」压进表头、行高挤成一团） |
 | `[FAIL] /dev/ttyS0 权限不足` | 不在 `dialout` 组 | `sudo usermod -aG dialout $USER` 后重新登录（不是重启服务） |
 | `[WARN] SoC ≥80°C` | 散热不足，高温会降频（`a→v` 直接变慢） | 先看 `dmesg \| grep -i throttl`；加 **5V 风扇（独立供电，别从板子 USB 取）** 对着散热片吹；别让布/车体挡住进风口、别晒阳光。现场测法：跑 5 件前后各读一次 `tools/venue_check.sh` 或 `/sys/class/thermal/thermal_zone0/temp` |
 | `[..] capture/ 占用` 超过 10GB | 旧录像占盘且拖慢 IO | `du -sh capture/* \| sort -h \| tail` 看日期，只留最近两次（赛前留证据），其余 `rm -rf capture/20261118_*` 这类旧目录 |
@@ -1407,6 +1409,7 @@ systemctl is-enabled wave-hdmi-watch          # 必须 enabled，否则第二天
 | `check_examples.py` | 校验示例图：漏登记 / 词表 / 孤儿图（纯 ast，PC 可跑） |
 | `net_check.sh` | 启动前网络自检（出口 IP/国家、代理端口、key、模型可调用），退出码 = 不合格项数 |
 | `venue_check.sh` | **现场一键体检**：`.env` 污染 / 定案值 / 服务重启次数 / 上电到 ready 秒数 / 相机别名 / USB 掉线 / LLM 往返 / 分辨率 / 串口 / 磁盘与温度；只读，退出码 = 失败项数 |
+| `render_table_offline.py` | **离屏渲染分拣表格**（调用 `show.py` 同一套绘制函数）：`--size 1920x1080` 看正常排版，`--size 800x480` 看降级时有多挤；不需相机/电控，不占真实屏幕 |
 | `probe_openai_api.py` | 接口兼容性探针：`service_tier`、`reasoning`、缓存字段、真实请求块形状 |
 | `probe_model_classes.py` | 比对 `.rknn` 真实类别数与代码列表 |
 | `snap_views.py` | **现场拍五视角并存盘**（第 5 路自动走镜面裁剪），用于离线复现 |
