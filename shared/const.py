@@ -33,7 +33,8 @@ CAMERA_PALLET_ID = os.environ.get("CAMERA_PALLET_ID", "/dev/wave/cam_pallet")   
 #   platform-fc880000.usb-usb-0:1.3:1.0      → cam_detect_1 （斜上①）
 #   platform-xhci-hcd.10.auto-usb-0:1.3:1.0 → cam_detect_2 （斜上②，0bda:9143）
 #   platform-fc880000.usb-usb-0:1.4:1.0      → cam_detect_3 （正下③）
-#   platform-fc800000.usb-usb-0:1.2:1.0      → cam_detect_4 （水平侧视④）
+#   platform-fc800000.usb-usb-0:1.1:1.0      → cam_detect_4 （水平侧视④，0bda:9211）
+#   platform-fc800000.usb-usb-0:1.2.2:1.0    → cam_detect_5 （补角⑤，0bda:9143，接在拓展坠后）
 
 # 识别区机位数：默认 4（①②斜上相对 + ③正下仰视 + ④水平侧视）。
 # 想退回 3 路：STAGE_TWO_DETECTION_COUNT=3（④ 的别名和说明会自动忽略）

@@ -20,7 +20,7 @@
 # 当前分布（5 台相机，2+2+1）：
 #   Bus03 fc880000   ①斜上(1.3) + ③正下(1.4)            2 路
 #   Bus05 xhci  480M 托盘(1.4) + ②斜上(1.3)  [USB3 口 Hub] 2 路
-#   Bus01 fc800000   ④平视(1.2) + 嵌套 Hub(ZTE 网卡)      1 路
+#   Bus01 fc800000   ④平视(1.1) + 拓展坠→⑤(1.2.2)         2 路
 # 2026-10-25：为布线把托盘与②从 Hub 的 1.1/1.2 挪到 1.3/1.4（只换口、不换相机）。
 #   按产品号确认：0bda:3035 = 托盘 → 1.4；0bda:9143 = ② → 1.3。两者 ID_V4L_PRODUCT
 #   都是 "USB Camera"，光看描述符分不开，必须用 ID_MODEL_ID 或看图。
@@ -46,10 +46,12 @@ SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-xhci-hcd.10.
 # 识别区③ 正下方仰视（看底面）
 SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.4:1.0", SYMLINK+="wave/cam_detect_3"
 
-# 识别区④ 水平侧视（补 ①② 的死角；新相机）
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.2:1.0", SYMLINK+="wave/cam_detect_4"
+# 识别区④ 水平侧视（补 ①② 的死角；新相机，0bda:9211 / icspring）
+# 2026-11-26：④（直插）与 ⑤（接拓展坠）在 Bus01 hub 上的 1.1 / 1.2 两个口互换了。
+#   相机本身没换（⑤ 仍在拓展坠后），只是两个上游口对调，因此按 ID_PATH 重新绑定：
+#   直插的 ④ 现在在 1.1（原 1.2）；⑤ 现在在拓展坠的 1.2.2（原 1.1.2）。
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.1:1.0", SYMLINK+="wave/cam_detect_4"
 
-# 识别区⑤ 补角（专门拍 ①②③④ 都看不到的那一面；0bda:9143 / RYS）
-# 2026-11-19：拔掉 4G 模组后把新相机插在它原来的口（Bus01 嵌套 hub 的 Port 2），
-# 与 ④ 同总线 → 该总线 2 路，已达到「每条 480M 总线最多 2 路 MJPG」的上限。
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.1.2:1.0", SYMLINK+="wave/cam_detect_5"
+# 识别区⑤ 补角（专门拍 ①②③④ 都看不到的那一面；0bda:9143 / RYS，接在拓展坠后面）
+# 2026-11-26：拓展坠从 hub 的 1.1 换到了 1.2，所以路径从 1.1.2 变成 1.2.2。
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.2.2:1.0", SYMLINK+="wave/cam_detect_5"
