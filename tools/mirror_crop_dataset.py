@@ -12,6 +12,7 @@
 import argparse
 import glob
 import os
+import re
 import shutil
 
 import cv2
@@ -53,11 +54,11 @@ def main():
             if not os.path.exists(label_path):
                 continue
 
-            if ('_view_%d_' % args.drop_view) in stem:
+            if re.search(r'_view_%d(?!\d)' % args.drop_view, stem):
                 dropped += 1
                 continue
 
-            if ('_view_%d_' % args.mirror_view) in stem:
+            if re.search(r'_view_%d(?!\d)' % args.mirror_view, stem):
                 image = cv2.imdecode(np.fromfile(image_path, np.uint8), cv2.IMREAD_COLOR)
                 if image is None:
                     continue

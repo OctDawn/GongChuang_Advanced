@@ -13,6 +13,7 @@
     llm         千问补框（约 20% 偏松/带背景，需要重点看）
     none        无框，需从零画
 """
+import argparse
 import csv
 import glob
 import os
@@ -43,8 +44,12 @@ def to_wsl(path):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--out', default=OUT)
+    args = parser.parse_args()
+    out = args.out
     for sub in ('images', 'labels'):
-        os.makedirs(os.path.join(OUT, sub), exist_ok=True)
+        os.makedirs(os.path.join(out, sub), exist_ok=True)
 
     rows = []
     for raw in open(SRC_LIST, encoding='utf-8-sig'):
@@ -63,7 +68,7 @@ def main():
 
         view = os.path.splitext(os.path.basename(path))[0]
         stem = '%s__%s__%s' % (cls, os.path.basename(directory), view)
-        target_image = os.path.join(OUT, 'images', stem + '.jpg')
+        target_image = os.path.join(out, 'images', stem + '.jpg')
         shutil.copyfile(path, target_image)
 
         # 找预标注：先 model@0.05，再千问
@@ -81,7 +86,7 @@ def main():
             if box:
                 break
 
-        label_path = os.path.join(OUT, 'labels', stem + '.txt')
+        label_path = os.path.join(out, 'labels', stem + '.txt')
         if box:
             with open(label_path, 'w', encoding='utf-8') as handle:
                 handle.write('%d %s\n' % (INDEX[cls], ' '.join(box[1:5])))
@@ -95,12 +100,12 @@ def main():
     order = {'llm': 0, 'model@0.05': 1, 'none': 2}
     rows.sort(key=lambda r: (order[r['source']], r['class']))
 
-    with open(os.path.join(OUT, 'review.csv'), 'w', newline='', encoding='utf-8') as handle:
+    with open(os.path.join(out, 'review.csv'), 'w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=['image', 'class', 'source', 'has_box'])
         writer.writeheader()
         writer.writerows(rows)
 
-    with open(os.path.join(OUT, 'classes.txt'), 'w', encoding='utf-8') as handle:
+    with open(os.path.join(out, 'classes.txt'), 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(CLASSES) + '\n')
 
     stats = {}
@@ -109,7 +114,7 @@ def main():
     print('总计 %d 张' % len(rows))
     for key in ('llm', 'model@0.05', 'none'):
         print('  %-11s %d' % (key, stats.get(key, 0)))
-    print('输出:', OUT)
+    print('输出:', out)
 
 
 if __name__ == '__main__':
