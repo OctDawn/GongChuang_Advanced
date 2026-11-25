@@ -101,14 +101,16 @@ SHAPE_EXAMPLES = (
      "shape": "cylinder_thinWalled", "view": _SIDE,
      "note": "橙色薄壁圆柱的水平侧视（④）。正对筒身时开口呈椭圆，能看到口沿内侧的内壁与孔洞纵深；"
              "壁厚只体现在口沿那一圈的宽度上。这条视线补的是 ①② 俯视时被压扁的竖直侧面。"},
-    {"filename": "orange_cylinder_thinwalled_mirror.jpg", "color": "orange",
+    {"filename": "green_cylinder_thinwalled_mirror.jpg", "color": "green",
      "shape": "cylinder_thinWalled", "view": _MIRROR,
-     "note": "同一只橙色薄壁圆柱在镜子里的像（⑤）。镜中是从斜下方向上仰视的视角，口径为椭圆、孔内可见内壁；"
-             "上下左右与实物相反，只用来补充该面的开口证据，不要据此推断空间位置。"},
-    {"filename": "red_cube_sticker_mirror.jpg", "color": "red", "shape": "cube",
+     "note": "绿色薄壁圆柱在镜子里的像（⑤，2026-11-25 重拍）。镜中是从斜下方向上仰视的视角，"
+             "口径为椭圆、孔内可见内壁；上下左右与实物相反，只用来补充该面的开口证据，"
+             "不要据此推断空间位置。"},
+    {"filename": "orange_cube_mirror.jpg", "color": "orange", "shape": "cube",
      "view": _MIRROR,
-     "note": "红色正方体，贴纸所在的那一面只能从镜子里看到（⑤）。镜中能看到白色贴纸贴在侧面上；"
-             "说明镜中影像是同一件物体、不是第二件，贴纸按 pattern 计入 label_kind。"},
+     "note": "橙色正方体在镜子里的像（⑤，2026-11-25 重拍）。镜中可见顶面与一个侧面，"
+             "用来确认“同一件物体只算一件”、不要当成第二件；镜面取景只保留上方 60%，"
+             "下方是虚焦桶体，不属于目标。"},
 )
 
 
