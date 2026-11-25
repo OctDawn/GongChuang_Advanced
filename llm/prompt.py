@@ -5,6 +5,7 @@
 
 import logging
 import json
+import os
 import re
 
 # 命名：PROMPT_<任务> 为固定规则；build_<任务>_prompt 只负责动态目录/参数。
@@ -89,7 +90,7 @@ from shared.const import (
 # 中文名（提示词中辅助模型理解）
 COLOR_CN = {
     'black': '黑', 'blue': '蓝', 'brown': '棕', 'deep_blue': '深蓝',
-    'deep_green': '深绿', 'green': '绿', 'orange': '橙', 'pink': '粉',
+    'deep_green': '深绿', 'gray': '灰', 'green': '绿', 'orange': '橙', 'pink': '粉',
     'purple': '紫', 'red': '红', 'white': '白', 'yellow': '黄',
 }
 SHAPE_CN = {
@@ -116,7 +117,9 @@ SHAPE_EN.update({
 })
 
 # 代码校验用的词表（贴纸已开放化，不再用固定词表）
-COLOR_VOCAB = list(DETECT_AREA_COLOR_CLASSES)
+# gray 只给 LLM 用：颜色模型（12 类）里没有灰，训练集也没有；把它加在这里只影响
+# prompt 词表与输出校验，不碰 DETECT_AREA_COLOR_CLASSES（那是 RKNN 的索引表）。
+COLOR_VOCAB = list(DETECT_AREA_COLOR_CLASSES) + ["gray"]
 # 注意用 LLM_SHAPE_CLASSES（= 模型类别 + LLM 补充），不是 SHAPE_CLASSES：
 # 前者是识别词表，后者是 RKNN 模型输出索引，两者不能混。
 SHAPE_VOCAB = list(LLM_SHAPE_CLASSES)
@@ -124,6 +127,28 @@ SHAPE_VOCAB = list(LLM_SHAPE_CLASSES)
 # 反查表：中文名 -> 英文键（模型偶尔会输出中文，用反查表兜底）
 # SHAPE_EN 已在上面连同同义别名一起定义，这里不要再重建，否则别名会被覆盖掉。
 COLOR_EN = {v: k for k, v in COLOR_CN.items()}
+COLOR_EN["grey"] = "gray"
+
+# ---- 贴纸开关 ----
+# LLM_STICKER_ENABLED=0：完全不判贴纸。prompt 里换掉整段贴纸规则，校验器强制
+# label_kind=none，下游不会因为有码/图案而拆盒。线下第一轮默认关。
+STICKER_ENABLED = os.environ.get("LLM_STICKER_ENABLED", "1").strip().lower() not in (
+    "0", "false", "no", "off")
+
+_STICKER_RULES_ON = """【贴纸判断规则】
+- 贴纸是贴在物体表面的一张图案/文字/码。只判断大类 label_kind，取值：
+  none（无贴纸）、pattern（图案）、text（文字）、qrcode（二维码）、barcode（条码）。
+- pattern 类：用 label_description 简洁描述图案的颜色和内容，格式「颜色+图形名」，
+  例如「红色五角星」「黑色圆点 2x2 排列」「灰色不规则污渍」。不要只写类型名；两个相同图案必须给相同描述。
+- text/qrcode/barcode 类：label_description 输出 null，实际内容由程序解码，不需要你读出。
+- 没有贴纸时 label_kind 输出 none，label_description 输出 null。"""
+
+_STICKER_RULES_OFF = """【贴纸判断规则：本轮关闭】
+- 本轮**不判断贴纸**（只按颜色 + 形状分拣）：`label_kind` 一律输出 "none"，
+  `label_description` 一律输出 null，即使看到了明显的图案、文字、二维码或条码也一样。
+- 贴纸上的图案/文字**不能**作为颜色或形状的判断依据，也不能改动这两个字段。"""
+
+_STICKER_RULES = _STICKER_RULES_ON if STICKER_ENABLED else _STICKER_RULES_OFF
 
 _logger = logging.getLogger("wave.vision")
 
@@ -254,13 +279,7 @@ PROMPT_CLASSIFY = f"""
 - 已有薄壁与实心不能合并；只有证据足够的明显结构差异才新建。照片模糊、遮挡或多个目标导致无法确定时输出 uncertain，不得猜测或输出 empty。
 - 仅 new 用 shape_description 简短记录关键结构及与已有形状的区别，建议 30~80 字；uncertain 用一句话说明证据不足原因。known/remembered/empty 省略该字段，不写几何说明。描述不包含颜色、贴纸文字或操作指令。
 
-【贴纸判断规则】
-- 贴纸是贴在物体表面的一张图案/文字/码。只判断大类 label_kind，取值：
-  none（无贴纸）、pattern（图案）、text（文字）、qrcode（二维码）、barcode（条码）。
-- pattern 类：用 label_description 简洁描述图案的颜色和内容，格式「颜色+图形名」，
-  例如「红色五角星」「黑色圆点 2x2 排列」「灰色不规则污渍」。不要只写类型名；两个相同图案必须给相同描述。
-- text/qrcode/barcode 类：label_description 输出 null，实际内容由程序解码，不需要你读出。
-- 没有贴纸时 label_kind 输出 none，label_description 输出 null。
+{_STICKER_RULES}
 
 【背景与空场景判断】
 - 以最前面的空场景参考图（顶部/底部，可能还有侧向各一张）识别固定承托面（透明亚克力板）、矮框、支架和背景，不把这些固定结构或背景图案当作目标及贴纸。参考图仅用于理解背景。

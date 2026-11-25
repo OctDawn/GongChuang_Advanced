@@ -4,7 +4,7 @@ import logging
 
 from llm.qw import LLMError, LLMDeadlineExceeded, qwen_realise, warm_up as warm_up_llm
 from llm.prompt import (
-    COLOR_VOCAB, SHAPE_VOCAB, COLOR_EN, SHAPE_EN, match_vocab,
+    COLOR_VOCAB, SHAPE_VOCAB, COLOR_EN, SHAPE_EN, match_vocab, STICKER_ENABLED,
     build_classify_prompt, build_classify_prefix,
     build_group_match_prompt, build_group_reference_prompt, build_fixed_view_classify_prompt,
     PROMPT_SHAPE_REFERENCE, PROMPT_CLASSIFY_CURRENT,
@@ -68,7 +68,10 @@ def parse_classify_result(result, records=()):
     if label_kind not in ("none", "pattern", "text", "qrcode", "barcode"):
         raise LLMError("label_kind 必须为 none/pattern/text/qrcode/barcode")
     label_description = result.get("label_description")
-    if label_kind == "pattern":
+    if not STICKER_ENABLED:
+        # 本轮不判贴纸：模型即便报了图案/码也不采纳，避免把同类拆盒
+        label_kind, label_description = "none", None
+    elif label_kind == "pattern":
         if (not isinstance(label_description, str)
                 or not label_description.strip() or len(label_description) > 40):
             raise LLMError("pattern 类必须提供不超过 40 字的 label_description")

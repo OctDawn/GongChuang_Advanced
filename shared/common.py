@@ -401,7 +401,7 @@ def category_is_full(recognition_counts, category):
 # ---- 中文显示名（显示屏货物名称：颜色 + 形状）----
 COLOR_DISPLAY_CN = {
     'black': '黑色', 'blue': '蓝色', 'brown': '棕色', 'deep_blue': '深蓝色',
-    'deep_green': '深绿色', 'green': '绿色', 'orange': '橙色', 'pink': '粉色',
+    'deep_green': '深绿色', 'gray': '灰色', 'green': '绿色', 'orange': '橙色', 'pink': '粉色',
     'purple': '紫色', 'red': '红色', 'white': '白色', 'yellow': '黄色',
 }
 SHAPE_DISPLAY_CN = {

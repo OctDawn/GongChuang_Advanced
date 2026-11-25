@@ -76,14 +76,59 @@ fi
 # mihomo 在监听 ≠ 节点能通：节点掉线时端口照样 LISTEN，CONNECT 会失败，主程序表现为
 # 每一轮都 'LLM 请求最终失败: Connection error.' → 直接丢件（YOLO_FALLBACK=0 时）。
 # 所以这里做一次真实往返（curl 走代理打 $BASE/models），通了才启动主程序。
-BASE_URL="$(sed -n 's/^DASHSCOPE_BASE_URL=//p' .env 2>/dev/null | head -1)"
-API_KEY="$(sed -n 's/^DASHSCOPE_API_KEY=//p' .env 2>/dev/null | head -1)"
+BASE_URL="${DASHSCOPE_BASE_URL:-$(sed -n 's/^DASHSCOPE_BASE_URL=//p' .env 2>/dev/null | head -1)}"
+API_KEY="${DASHSCOPE_API_KEY:-$(sed -n 's/^DASHSCOPE_API_KEY=//p' .env 2>/dev/null | head -1)}"
 BASE_URL="${BASE_URL%/}"
 WAIT_NET="${WAIT_NET:-300}"       # 等网络真正可用的最长秒数（冷启动后代理可能要几分钟才通）
 # 单调时钟（秒）。**不要用 $SECONDS**：它是墙钟，开机后 NTP 校正会让它跳变
 # （实测开机 26 秒时跳了 3h48m，导致等待判定失真、门 26 秒就误判超时放行）。
 mono_seconds() { cut -d. -f1 /proc/uptime 2>/dev/null || date +%s; }
 PROXY_FOR_CURL="${HTTPS_PROXY:-${HTTP_PROXY:-}}"
+
+# —— 主模型自检：连不上就切备份模型 ——
+# 必须在 exec 之前做：llm/qw.py 在 import 时就把 DASHSCOPE_* 读成模块常量，
+# 进程里再改环境变量不生效。用一次真实 chat 往返，能同时验证 key、代理和模型名；
+# 只看 /models 不够（有的线路能列模型，生成却 400/超时）。
+MODEL_SELFCHECK_TIMEOUT="${MODEL_SELFCHECK_TIMEOUT:-25}"
+probe_chat_model() {  # 参数：<model> <base_url> <key>；打印 HTTP 状态码
+    local model="$1" base="$2" key="$3" body code
+    [ -n "$model" ] && [ -n "$key" ] || return 1
+    body=$(printf '{"model":"%s","messages":[{"role":"user","content":"ping"}]}' "$model")
+    if [ -n "$PROXY_FOR_CURL" ]; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -m "$MODEL_SELFCHECK_TIMEOUT" \
+            -x "$PROXY_FOR_CURL" -H "Authorization: Bearer $key" \
+            -H 'Content-Type: application/json' -d "$body" "${base%/}/chat/completions" 2>/dev/null)
+    else
+        code=$(curl -s -o /dev/null -w '%{http_code}' -m "$MODEL_SELFCHECK_TIMEOUT" \
+            -H "Authorization: Bearer $key" \
+            -H 'Content-Type: application/json' -d "$body" "${base%/}/chat/completions" 2>/dev/null)
+    fi
+    printf '%s' "$code"
+}
+
+if [ -n "${DASHSCOPE_MODEL:-}" ] && [ -n "${DASHSCOPE_API_KEY:-}" ]; then
+    log "模型自检: ${DASHSCOPE_MODEL} @ ${DASHSCOPE_BASE_URL}"
+    MODEL_CODE=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
+    if [ "$MODEL_CODE" = "200" ]; then
+        log "模型自检通过: ${DASHSCOPE_MODEL}（HTTP=200）"
+    elif [ -n "${LLM_FALLBACK_MODEL:-}" ] && [ -n "${LLM_FALLBACK_API_KEY:-}" ]; then
+        log "!! 模型自检失败（HTTP=${MODEL_CODE:-000}），切到备份模型: ${LLM_FALLBACK_MODEL}"
+        export DASHSCOPE_MODEL="$LLM_FALLBACK_MODEL"
+        export DASHSCOPE_BASE_URL="${LLM_FALLBACK_BASE_URL:-$DASHSCOPE_BASE_URL}"
+        export DASHSCOPE_API_KEY="$LLM_FALLBACK_API_KEY"
+        if [ -n "${LLM_FALLBACK_CACHE_MODE:-}" ]; then
+            export LLM_CACHE_MODE="$LLM_FALLBACK_CACHE_MODE"
+        fi
+        BASE_URL="${DASHSCOPE_BASE_URL%/}"
+        API_KEY="$DASHSCOPE_API_KEY"
+        MODEL_CODE2=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
+        log "备份模型自检: ${DASHSCOPE_MODEL}（HTTP=${MODEL_CODE2:-000}）"
+    else
+        log "!! 模型自检失败（HTTP=${MODEL_CODE:-000}）且未配 LLM_FALLBACK_*，按原模型启动"
+    fi
+else
+    log "!! 未读到 DASHSCOPE_MODEL / DASHSCOPE_API_KEY，跳过模型自检"
+fi
 
 # 认证头走 curl 的 -K 配置文件，不进命令行：否则 ps / systemctl status / journal
 # 都会把 key 原样照下来（比赛后请把 key 轮换一次）。
