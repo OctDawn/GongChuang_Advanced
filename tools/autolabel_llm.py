@@ -24,7 +24,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 SRC = r"D:\GongChuang_Advanced\capture"
 OUT = r"D:\GongChuang_Advanced\capture_labels"
-ENV_PATH = r"D:\GongChuang_Advanced\.env"
+# 项目根目录的 .env；用相对路径解析，Windows 与 WSL(/mnt/d) 下都能找到。
+ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 IMG_EXT = {".jpg", ".jpeg", ".png"}
 WORKERS = 6
 MAX_SIDE = 1024

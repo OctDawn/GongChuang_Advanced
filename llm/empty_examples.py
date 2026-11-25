@@ -76,8 +76,11 @@ SHAPE_EXAMPLES = (
      "note": "同一件的仰视。一整片连续外表面；右侧较亮的竖直边是侧棱被逆光照亮的高光，**不是口沿**；"
              "内部没有第二个面。"},
 
-    {"filename": "black_prism6_top.jpg", "color": "black", "shape": "prism6", "view": _TOP,
-     "note": "黑色实心六棱柱（竖放）。正六边形顶面，单线轮廓，无内缩边界；侧面为暗面。"},
+    {"filename": "orange_pyramid4_top.jpg", "color": "orange", "shape": "pyramid4",
+     "view": _TOP,
+     "note": "直立的橙色四棱锥（① 斜上方）。尖顶清晰，可见两个三角形侧面与底面两条边；"
+             "四个三角形侧面全部汇聚到同一个尖顶，底面是四边形——与三棱柱的区别就在这个汇聚点，"
+             "而不是看“现在能看到几个面”。外围橄榄色/橙色亚克力与白色挡板不是目标。"},
     {"filename": "black_prism6_lying_top.jpg", "color": "black", "shape": "prism6", "view": _TOP,
      "note": "同一件横放。可见长条矩形侧面 + 六边形端面；面与面之间只有发散的棱线、都终止在外轮廓上，"
              "没有内腔。说明姿态变化不改变形状身份。"},

@@ -27,7 +27,7 @@ logs/
 .stale_bak/
 llm/example/resources/
 
-# ---- YOLO ѵ���������󣬲���⣩----
+# ---- YOLO ѵ���������󣬲���⣩----
 runs/
 weights/
 yolo_full/
@@ -40,3 +40,13 @@ models_new/
 # ---- 粗打标产物（体积大，不入库） ----
 capture_labels/
 capture_labels_export.zip
+
+# ---- 训练数据与评测集（2026-11-25）----
+datasets/
+_eval/
+_eval2/
+_tv/
+_train_views.tgz
+
+# ---- 实验模型（只入库 models/ 下部署用的那一份）----
+models_try/
