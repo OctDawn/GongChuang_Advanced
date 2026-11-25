@@ -60,15 +60,6 @@ SHAPE_EXAMPLES = (
      "note": "同一件的另一侧。封闭端面：五边形平板与边缘齐平，边缘一圈窄线是壁厚不是内腔；"
              "左下边能看到打印纹理。"},
 
-    {"filename": "yellow_prism4_thinwalled_top.jpg", "color": "yellow",
-     "shape": "prism4_thinWalled", "view": _TOP,
-     "note": "黄色薄壁四棱柱，开口朝上。彩色件的关键：开口内部是比外壁更亮、颜色更纯的同色面"
-             "（内壁反光叠加），**不是**暗色空腔；仍以口沿轮廓和内壁下沉为准。"},
-    {"filename": "yellow_prism4_thinwalled_bottom.jpg", "color": "yellow",
-     "shape": "prism4_thinWalled", "view": _BOTTOM,
-     "note": "同一件的另一侧。封闭端面：边缘一圈亮环是壁厚叠加逆光高光，中间是与环基本齐平的"
-             "黄色平板，不是内腔。"},
-
     {"filename": "black_cube_top.jpg", "color": "black", "shape": "cube", "view": _TOP,
      "note": "黑色实心正方体。顶面是一整片完整平面；每条可见边只有一条线，没有向内偏移的平行边界；"
              "侧面的明暗渐变是光照，不是内壁。"},
@@ -103,14 +94,16 @@ SHAPE_EXAMPLES = (
              "壁厚只体现在口沿那一圈的宽度上。这条视线补的是 ①② 俯视时被压扁的竖直侧面。"},
     {"filename": "green_cylinder_thinwalled_mirror.jpg", "color": "green",
      "shape": "cylinder_thinWalled", "view": _MIRROR,
-     "note": "绿色薄壁圆柱在镜子里的像（⑤，2026-11-25 重拍）。镜中是从斜下方向上仰视的视角，"
-             "口径为椭圆、孔内可见内壁；上下左右与实物相反，只用来补充该面的开口证据，"
-             "不要据此推断空间位置。"},
-    {"filename": "orange_cube_mirror.jpg", "color": "orange", "shape": "cube",
-     "view": _MIRROR,
-     "note": "橙色正方体在镜子里的像（⑤，2026-11-25 重拍）。镜中可见顶面与一个侧面，"
-             "用来确认“同一件物体只算一件”、不要当成第二件；镜面取景只保留上方 60%，"
-             "下方是虚焦桶体，不属于目标。"},
+     "note": "绿色薄壁圆柱在镜子里的像（⑤，2026-11-25 重拍）：筒口正对镜子，"
+             "镜中是一个完整的绿色圆环（口沿），环内可见下沉的内壁与孔洞纵深，环宽即壁厚；"
+             "看到环就等于看到开口，与另一侧封闭端面的实心圆盘不同。"
+             "上下左右与实物相反，只用来补充开口证据，不要据此推断空间位置。"},
+    {"filename": "blue_prism4_thinwalled_mirror.jpg", "color": "blue",
+     "shape": "prism4_thinWalled", "view": _MIRROR,
+     "note": "蓝色薄壁四棱柱在镜子里的像（⑤，2026-11-25 重拍）：开口正对镜子，"
+             "镜中是完整的**矩形环**口沿，左右两条竖边各是一道有宽度的壁（壁厚），"
+             "环内是下沉的内壁与内腔，不是与口沿齐平的平面。"
+             "镜面取景只保留上方 60%，下方虚焦桶体不属于目标。"},
 )
 
 
