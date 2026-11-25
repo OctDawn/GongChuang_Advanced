@@ -41,6 +41,7 @@
 - 例图换直立四棱锥
 - 加离线评测/分栏校验工具
 - 18 类微调未过基线，暂不替换
+- 170 张待标工作区 + 拍摄指南
 
 **11/23 Chatbox（晚）**
 - 形状模型换回 shape_best
@@ -1448,6 +1449,9 @@ systemctl is-enabled wave-hdmi-watch          # 必须 enabled，否则第二天
 | `venue_check.sh` | **现场一键体检**：`.env` 污染 / 定案值 / 服务重启次数 / 上电到 ready 秒数 / 相机别名 / USB 掉线 / LLM 往返 / 分辨率 / 串口 / 磁盘与温度；只读，退出码 = 失败项数 |
 | `render_table_offline.py` | **离屏渲染分拣表格**（调用 `show.py` 同一套绘制函数）：`--size 1920x1080` 看正常排版，`--size 800x480` 看降级时有多挤；不需相机/电控，不占真实屏幕 |
 | `pallet_lanes.py` | **托盘分栏校验**：在空盘图上找隔板、与栏网格逐条比偏差，并画出「送图裁剪框 + 栏网格 + 检出框」；打印每个框落第几栏和最终 5 位 |
+| `make_label_workspace.py` | 把「自动标注不可信」的图整理成 `datasets/to_label`（images/labels/classes.txt/review.csv），带预标注与优先级 |
+| `check_labels.py` | 标注后自检：类别越界、框过小/过大、**框贴住两条边**（挡板/墙假框）；结果同时写入 `label_check.txt` |
+| `shot_sessions.sh` | 按类拍摄：`--classes "pyramid4 ..." --count 30 --resume`，每个姿态停住等摆货，末尾打印每类实际组数；`--empty 20` 拍空台负样本 |
 | `probe_openai_api.py` | 接口兼容性探针：`service_tier`、`reasoning`、缓存字段、真实请求块形状 |
 | `probe_model_classes.py` | 比对 `.rknn` 真实类别数与代码列表 |
 | `snap_views.py` | **现场拍五视角并存盘**（第 5 路自动走镜面裁剪），用于离线复现 |
