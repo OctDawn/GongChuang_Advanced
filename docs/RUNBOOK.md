@@ -109,10 +109,23 @@ DETECT_MIRROR_VIEW_INDEX=5
 
 ### 2.3 光路与画面
 
+**一键体检（推荐先跑这个）：**
+
+```bash
+bash tools/venue_check.sh                       # 被动体检，约 20 秒，退出码=失败项数
+bash tools/venue_check.sh --classify capture/views/<某组>   # 再跑一件真实识别（+5~10 秒）
+bash tools/venue_check.sh --wait-ready          # 重启后量真实冷启动就绪时间
+```
+
+覆盖：`.env` 定案值与重复键、示例/提示词加载（含贴纸开关、灰色词表）、systemd 自启与重启次数、
+六路相机别名、USB 掉线计数、LLM 端点往返、显示屏分辨率、串口权限、磁盘/温度、启动自检与预热日志。
+标 `[FAIL]` 的才计入退出码，`[WARN]` 逐条确认即可。
+
+逐路看画面：
+
 ```bash
 python tools/preview_camera.py            # 逐路看画面
 python tools/pallet_lanes.py              # 托盘五栏网格是否对齐
-bash tools/venue_check.sh                 # 一键体检，退出码 = 失败项数
 ```
 
 - 5 路画面都清晰、不糊、不过曝；⑤ 镜子干净、位置没被碰偏。

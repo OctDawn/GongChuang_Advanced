@@ -6,6 +6,7 @@
 #   bash tools/venue_check.sh --wait-ready    # 先等主程序打出「等待 c/a」再体检（量真实冷启动）
 #   bash tools/venue_check.sh --cameras       # 额外逐路取帧（会占用相机，先 systemctl stop）
 #   bash tools/venue_check.sh --no-net        # 跳过网络/API 往返（没网时用）
+#   bash tools/venue_check.sh --classify <目录>  # 额外跑一件真实识别（该目录下的 view_1..5.jpg）
 #   bash tools/venue_check.sh --help
 #
 # 退出码 = 失败项数（0 = 全绿，可以封车）。WARN 不计入退出码。
@@ -22,15 +23,24 @@ cd "$ROOT" || exit 1
 WITH_CAMS=0
 WITH_NET=1
 WAIT_READY=0
+CLASSIFY_DIR=""
+WANT_CLASSIFY=0
 for arg in "$@"; do
+    if [ "$WANT_CLASSIFY" = "1" ]; then
+        CLASSIFY_DIR="$arg"; WANT_CLASSIFY=0; continue
+    fi
     case "$arg" in
         --cameras) WITH_CAMS=1 ;;
         --wait-ready) WAIT_READY=1 ;;
         --no-net)  WITH_NET=0 ;;
+        --classify) WANT_CLASSIFY=1 ;;
         -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) printf '未知参数: %s（用 --help 看用法）\n' "$arg"; exit 2 ;;
     esac
 done
+if [ "$WANT_CLASSIFY" = "1" ]; then
+    printf '%s\n' '--classify 需要一个目录参数'; exit 2
+fi
 
 if [ -t 1 ]; then
     G=$'\033[32m'; R=$'\033[31m'; Y=$'\033[33m'; B=$'\033[36m'; N=$'\033[0m'
@@ -133,11 +143,23 @@ else
 fi
 
 TEMP_ENV="$(env_get LLM_TEMPERATURE)"
-if [ "${TEMP_ENV:-}" = "0" ]; then
-    ok 'LLM_TEMPERATURE=0（同一组图输出一致）'
-else
-    warn "LLM_TEMPERATURE=${TEMP_ENV:-（未写=服务端默认）}" "线下定案为 0，否则同一件货可能每次不同答案"
-fi
+MODEL_NOW="$(env_get DASHSCOPE_MODEL)"
+case "$MODEL_NOW" in
+    *astra*|*gpt*)
+        if [ -z "$TEMP_ENV" ]; then
+            ok 'LLM_TEMPERATURE 为空（GPT 不接受 temperature，必须留空）'
+        else
+            bad "LLM_TEMPERATURE=$TEMP_ENV，GPT 会直接 400" '改成 LLM_TEMPERATURE= 后重启'
+        fi
+        ;;
+    *)
+        if [ "${TEMP_ENV:-}" = "0" ]; then
+            ok 'LLM_TEMPERATURE=0（同一组图输出一致）'
+        else
+            warn "LLM_TEMPERATURE=${TEMP_ENV:-（未写=服务端默认）}" '千问建议 0；换成 GPT 时必须留空'
+        fi
+        ;;
+ esac
 
 VIEWS_ENV="$(env_get YOLO_VIEW_INDICES)"
 if [ -z "$VIEWS_ENV" ]; then
@@ -149,7 +171,38 @@ else
 fi
 
 FALLBACK_ENV="$(env_get YOLO_FALLBACK)"
-info "YOLO_FALLBACK=${FALLBACK_ENV:-（未写=0，不回落）}"
+if [ "${FALLBACK_ENV:-}" = "1" ]; then
+    ok 'YOLO_FALLBACK=1（LLM 超时/报错时回落 YOLO）'
+else
+    warn "YOLO_FALLBACK=${FALLBACK_ENV:-（未写=0，不回落）}" '超时直接回 0，丢件；建议 1'
+fi
+
+TIER_ENV="$(env_get LLM_SERVICE_TIER)"
+if [ -n "$TIER_ENV" ]; then
+    ok "LLM_SERVICE_TIER=$TIER_ENV"
+else
+    warn 'LLM_SERVICE_TIER 未写（走默认路由，兜底时间会变长）' 'GPT 主模型建议 ultrafast'
+fi
+
+STICKER_ENV="$(env_get LLM_STICKER_ENABLED)"
+if [ "${STICKER_ENV:-1}" = "0" ]; then
+    ok 'LLM_STICKER_ENABLED=0（本轮不判贴纸）'
+else
+    warn "LLM_STICKER_ENABLED=${STICKER_ENV:-（未写=1，判贴纸）}" '需要关闭时置 0，否则同色同形会被贴纸拆盒'
+fi
+
+FB_MODEL_ENV="$(env_get LLM_FALLBACK_MODEL)"
+if [ -n "$FB_MODEL_ENV" ]; then
+    ok "已配备份模型：$FB_MODEL_ENV（启动自检失败时自动切）"
+else
+    warn '未配 LLM_FALLBACK_MODEL' '主模型挂了就只能靠 YOLO 兜底'
+fi
+
+FB_TIMEOUT_ENV="$(env_get LLM_FALLBACK_TIMEOUT)"
+case "${FB_TIMEOUT_ENV:-35}" in
+    12|13) ok "LLM_FALLBACK_TIMEOUT=${FB_TIMEOUT_ENV}" ;;
+    *)    warn "LLM_FALLBACK_TIMEOUT=${FB_TIMEOUT_ENV:-35}（默认值）" '线下定案 12：留 3 秒给回包和推铲' ;;
+esac
 
 BASE_URL="$(env_get DASHSCOPE_BASE_URL)"
 API_KEY="$(env_get DASHSCOPE_API_KEY)"
@@ -162,6 +215,45 @@ fi
 info "模型=${MODEL:-（未写）}  端点=${BASE_URL:-（未写）}"
 
 # ────────────────────────────────────────────────────────────
+section '1.5 示例与提示词'
+
+PYBIN=""
+for cand in "$HOME/miniconda3/envs/llm/bin/python" python; do
+    if [ -x "$cand" ] || command -v "$cand" >/dev/null 2>&1; then PYBIN="$cand"; break; fi
+done
+if [ -z "$PYBIN" ]; then
+    warn '找不到 python，跳过示例/提示词检查' 'conda activate llm 后再跑'
+else
+    EX_OUT="$("$PYBIN" - <<'PY' 2>&1
+import sys
+sys.path.insert(0, ".")
+from shared.dotenv import load_dotenv
+load_dotenv()
+from llm.empty_examples import load_shape_examples, load_empty_examples
+from llm import prompt as p
+ex = load_shape_examples()
+emp = load_empty_examples()
+print("shapes=%d empty=%d sticker=%d gray=%d" % (
+    len(ex), len(emp["detect_area"]), int(p.STICKER_ENABLED), int("gray" in p.COLOR_VOCAB)))
+PY
+)"
+    case "$EX_OUT" in
+        *"shapes="*)
+            ok "示例加载成功：$EX_OUT"
+            case "$EX_OUT" in
+                *"sticker=0"*) ok '提示词为“本轮不判贴纸”' ;;
+                *) warn '提示词仍在判贴纸' '要关闭就把 .env 的 LLM_STICKER_ENABLED 置 0 后重启' ;;
+            esac
+            case "$EX_OUT" in
+                *"gray=1"*) ok '颜色词表含 gray' ;;
+                *) bad '颜色词表没有 gray' '看 llm/prompt.py 的 COLOR_CN / COLOR_VOCAB' ;;
+            esac
+            ;;
+        *)
+            bad '示例/提示词加载失败' "$(printf '%s' "$EX_OUT" | tail -3)" ;;
+    esac
+fi
+
 section '2. 服务（systemd）'
 
 if command -v systemctl >/dev/null 2>&1; then
@@ -305,7 +397,8 @@ fi
 section '6. 显示屏'
 
 if command -v xrandr >/dev/null 2>&1; then
-    SCREEN_ROWS="$(DISPLAY="${DISPLAY:-:0}" xrandr --current 2>/dev/null | grep ' connected')"
+    XAUTH="${XAUTHORITY:-$HOME/.Xauthority}"
+    SCREEN_ROWS="$(DISPLAY="${DISPLAY:-:0}" XAUTHORITY="$XAUTH" xrandr --current 2>/dev/null | grep ' connected')"
     if [ -n "$SCREEN_ROWS" ]; then
         LOW=""
         SHOWN=""
@@ -326,7 +419,8 @@ if command -v xrandr >/dev/null 2>&1; then
                  '看门狗 enabled 仍降级时：看 logs/hdmi_watch.log 的 xrandr 回显；临时救 python tools/hdmi_watch.py --force-mode'
         fi
     else
-        bad "DISPLAY=${DISPLAY:-:0} 上读不到显示" '确认已登录图形会话；或 xrandr 用对 DISPLAY'
+        bad "DISPLAY=${DISPLAY:-:0} 上没有已连接的显示器（全 disconnected）" \
+            '检查 HDMI 线、显示器电源；没屏也能跑，但看不到分拣表格（上电后记得接回）'
     fi
 else
     warn '没装 xrandr，跳过显示检查' 'sudo apt install x11-xserver-utils'
@@ -373,6 +467,45 @@ fi
 
 CAP_MB="$(du -sm capture 2>/dev/null | awk '{print $1}')"
 [ -n "${CAP_MB:-}" ] && info "capture/ 占用 ${CAP_MB} MB（录像多了会拖慢 IO）"
+
+section '9. 启动自检（本次开机）'
+
+SELF_LINE="$(journalctl -u wave-vision-llm -b --no-pager 2>/dev/null \
+    | grep -E '模型自检通过|切到备份模型|模型自检失败' | tail -1)"
+if [ -z "$SELF_LINE" ]; then
+    warn '日志里没有模型自检记录' '服务没重启过，或跑的还是旧版本'
+else
+    case "$SELF_LINE" in
+        *切到备份*|*失败*)
+            warn "启动自检未过：${SELF_LINE#*] }" '多半是代理/节点；修好后重启服务' ;;
+        *)
+            ok "${SELF_LINE#*] }" ;;
+    esac
+fi
+
+WARM_LINE="$(journalctl -u wave-vision-llm -b --no-pager 2>/dev/null | grep '预热完成' | tail -1)"
+case "$WARM_LINE" in
+    *"预热完成"*) ok "$(printf '%s' "$WARM_LINE" | sed 's/.*LLM 预热完成/LLM 预热完成/')" ;;
+    *) warn '日志里没有 LLM 预热记录' '看 journalctl -u wave-vision-llm -b | grep 预热' ;;
+esac
+
+if [ -n "$CLASSIFY_DIR" ]; then
+    section '10. 真实识别（--classify）'
+    if [ ! -d "$CLASSIFY_DIR" ]; then
+        bad "--classify 目录不存在：$CLASSIFY_DIR" '给一个含 view_1..5.jpg 的采集目录'
+    elif [ -z "$PYBIN" ]; then
+        warn '找不到 python，无法跑真实识别' 'conda activate llm 后再跑'
+    else
+        info '跑一件真实识别（约 5~15 秒）…'
+        CLS_OUT="$("$PYBIN" tools/offline_debug.py --images "$CLASSIFY_DIR"/view_*.jpg \
+            --tag venue_check --timeout 40 2>&1 | grep -E 'run 1/1|失败:' | tail -2)"
+        case "$CLS_OUT" in
+            *"失败:"*) bad "识别失败：$CLS_OUT" '往上看完整输出：鉴权 / 超时 / 参数不支持' ;;
+            *"run 1/1"*) ok "$CLS_OUT" ;;
+            *) warn "没拿到识别结果：${CLS_OUT:-（空）}" '看 offline_debug 的完整输出' ;;
+        esac
+    fi
+fi
 
 # ────────────────────────────────────────────────────────────
 printf '\n%s\n' "=============================================="
