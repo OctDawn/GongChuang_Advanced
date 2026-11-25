@@ -40,7 +40,7 @@
 - 训练去 ③ 仰视、⑤ 裁上 60%
 - 例图换直立四棱锥
 - 加离线评测/分栏校验工具
-- 18 类补数据后 7/11，仍未替换
+- 16 类微调 9/11，已同步板子
 - 170 张待标工作区 + 拍摄指南
 
 **11/23 Chatbox（晚）**
@@ -919,7 +919,7 @@ LLM 预热完成，耗时 … 秒（首轮应看到 cached_tokens 命中）
 
 | 文件 | 大小 | 用途 |
 | --- | --- | --- |
-| `shape_detect_area.rknn` | **6.98 MB** | 形状，= `models_try/shape_best.rknn`（16 类），板上实测 3/3 |
+| `shape_detect_area.rknn` | **6.44 MB** | 形状，16 类。2026-11-25 用真实数据微调并部署（`_eval2` 9/11，基线 6/11）；旧版备份在 `models/shape_detect_area.rknn.bak.20261125`（板上）与 `.bak.prev`（仓库） |
 | `color_detect_area.rknn` | 19.95 MB | 颜色（YOLO 兜底用；主链路颜色靠千问） |
 | `label_detect_area.rknn` | 6.97 MB | 贴纸定位 |
 | `color_large_pallet.rknn` | 6.97 MB | 托盘查栏兜底 |
