@@ -10,6 +10,7 @@ import glob
 import os
 import re
 import shutil
+import sys
 
 ROOT = '/mnt/d/GongChuang_Advanced'
 AUTO = os.path.join(ROOT, 'datasets/shape18_real')
@@ -23,27 +24,29 @@ CLASSES = ['ball', 'cone', 'cube', 'cuboid', 'cylinder', 'cylinder_thinWalled', 
 
 
 def main():
+    autos = sys.argv[1:] or [AUTO]
     for split in ('train', 'val'):
         for sub in ('images', 'labels'):
             os.makedirs(os.path.join(OUT, sub, split), exist_ok=True)
 
     entries = {}
 
-    # 1) 自动框（400 张）
-    for split in ('train', 'val'):
-        for label in glob.glob(os.path.join(AUTO, 'labels', split, '*.txt')):
-            stem = os.path.splitext(os.path.basename(label))[0]
-            match = AUTO_RE.match(stem)
-            if not match:
-                continue
-            directory = match.group('dir')
-            view = match.group('view')
-            image = os.path.join(AUTO, 'images', split, stem + '.jpg')
-            if not os.path.exists(image):
-                continue
-            entries[(directory, view)] = (image,
-                                          open(label, encoding='utf-8').read().strip(),
-                                          match.group('pose'))
+    # 1) 自动框（可多个数据集，后面的覆盖前面的）
+    for base in autos:
+        for split in ('train', 'val'):
+            for label in glob.glob(os.path.join(base, 'labels', split, '*.txt')):
+                stem = os.path.splitext(os.path.basename(label))[0]
+                match = AUTO_RE.match(stem)
+                if not match:
+                    continue
+                directory = match.group('dir')
+                view = match.group('view')
+                image = os.path.join(base, 'images', split, stem + '.jpg')
+                if not os.path.exists(image):
+                    continue
+                entries[(directory, view)] = (image,
+                                              open(label, encoding='utf-8').read().strip(),
+                                              match.group('pose'))
 
     # 2) 人工标注（170 张）覆盖同名键
     human_count = 0
