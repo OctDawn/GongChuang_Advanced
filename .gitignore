@@ -50,3 +50,9 @@ _train_views.tgz
 
 # ---- 实验模型（只入库 models/ 下部署用的那一份）----
 models_try/
+
+# local scratch outputs
+_nv/
+
+# model rollback backups
+*.rknn.bak*
