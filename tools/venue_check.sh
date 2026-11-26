@@ -489,6 +489,20 @@ case "$WARM_LINE" in
     *) warn '日志里没有 LLM 预热记录' '看 journalctl -u wave-vision-llm -b | grep 预热' ;;
 esac
 
+# 进程实际用哪个模型：启动自检失败时 start_vision 会 export 备份模型，
+# 只查 .env 会误报“绿”，必须看 /proc/<pid>/environ。
+MAIN_PID="$(systemctl show -p MainPID --value wave-vision-llm 2>/dev/null)"
+RUN_MODEL="$(tr '\0' '\n' < "/proc/$MAIN_PID/environ" 2>/dev/null | sed -n 's/^DASHSCOPE_MODEL=//p')"
+ENV_MODEL="$(env_get DASHSCOPE_MODEL)"
+if [ -z "$RUN_MODEL" ]; then
+    warn '读不到进程环境，无法确认运行中的模型' 'systemctl status wave-vision-llm 看进程是否还在'
+elif [ -n "$ENV_MODEL" ] && [ "$RUN_MODEL" != "$ENV_MODEL" ]; then
+    warn "运行中的模型是 $RUN_MODEL，而 .env 写的是 $ENV_MODEL（已切备份）" \
+         '代理/节点恢复后重启服务切回主模型'
+else
+    ok "运行中的模型：$RUN_MODEL（与 .env 一致）"
+fi
+
 if [ -n "$CLASSIFY_DIR" ]; then
     section '10. 真实识别（--classify）'
     if [ ! -d "$CLASSIFY_DIR" ]; then
