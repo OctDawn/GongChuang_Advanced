@@ -106,13 +106,31 @@ probe_chat_model() {  # 参数：<model> <base_url> <key>；打印 HTTP 状态�
     printf '%s' "$code"
 }
 
-if [ -n "${DASHSCOPE_MODEL:-}" ] && [ -n "${DASHSCOPE_API_KEY:-}" ]; then
-    log "模型自检: ${DASHSCOPE_MODEL} @ ${DASHSCOPE_BASE_URL}"
-    MODEL_CODE=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
-    if [ "$MODEL_CODE" = "200" ]; then
-        log "模型自检通过: ${DASHSCOPE_MODEL}（HTTP=200）"
-    elif [ -n "${LLM_FALLBACK_MODEL:-}" ] && [ -n "${LLM_FALLBACK_API_KEY:-}" ]; then
-        log "!! 模型自检失败（HTTP=${MODEL_CODE:-000}），切到备份模型: ${LLM_FALLBACK_MODEL}"
+# 调用时机很重要：必须放在下面“网络就绪检查”之后。
+# 冷启动时 mihomo 只比本服务早 5 秒起来（实测 15:55:47 → 15:55:52），
+# 那个时刻 7890 已在监听、但隧道还没握手完成，立即探测必然是 000，
+# 会把 GPT 误切成千问。等价地：先等网络真能用，再判模型。
+MODEL_SELFCHECK_RETRIES="${MODEL_SELFCHECK_RETRIES:-3}"
+
+run_model_selfcheck() {
+    if [ -z "${DASHSCOPE_MODEL:-}" ] || [ -z "${DASHSCOPE_API_KEY:-}" ]; then
+        log "!! 未读到 DASHSCOPE_MODEL / DASHSCOPE_API_KEY，跳过模型自检"
+        return 0
+    fi
+    local attempt code
+    for attempt in $(seq 1 "$MODEL_SELFCHECK_RETRIES"); do
+        log "模型自检（第 ${attempt}/${MODEL_SELFCHECK_RETRIES} 次）: ${DASHSCOPE_MODEL} @ ${DASHSCOPE_BASE_URL}"
+        code=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
+        if [ "$code" = "200" ]; then
+            log "模型自检通过: ${DASHSCOPE_MODEL}（HTTP=200）"
+            return 0
+        fi
+        log "!! 模型自检未过（HTTP=${code:-000}），5 秒后重试"
+        sleep 5
+    done
+
+    if [ -n "${LLM_FALLBACK_MODEL:-}" ] && [ -n "${LLM_FALLBACK_API_KEY:-}" ]; then
+        log "!! 模型自检失败（HTTP=${code:-000}），切到备份模型: ${LLM_FALLBACK_MODEL}"
         export DASHSCOPE_MODEL="$LLM_FALLBACK_MODEL"
         export DASHSCOPE_BASE_URL="${LLM_FALLBACK_BASE_URL:-$DASHSCOPE_BASE_URL}"
         export DASHSCOPE_API_KEY="$LLM_FALLBACK_API_KEY"
@@ -121,14 +139,13 @@ if [ -n "${DASHSCOPE_MODEL:-}" ] && [ -n "${DASHSCOPE_API_KEY:-}" ]; then
         fi
         BASE_URL="${DASHSCOPE_BASE_URL%/}"
         API_KEY="$DASHSCOPE_API_KEY"
-        MODEL_CODE2=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
-        log "备份模型自检: ${DASHSCOPE_MODEL}（HTTP=${MODEL_CODE2:-000}）"
+        local code2
+        code2=$(probe_chat_model "$DASHSCOPE_MODEL" "$DASHSCOPE_BASE_URL" "$DASHSCOPE_API_KEY")
+        log "备份模型自检: ${DASHSCOPE_MODEL}（HTTP=${code2:-000}）"
     else
-        log "!! 模型自检失败（HTTP=${MODEL_CODE:-000}）且未配 LLM_FALLBACK_*，按原模型启动"
+        log "!! 模型自检失败（HTTP=${code:-000}）且未配 LLM_FALLBACK_*，按原模型启动"
     fi
-else
-    log "!! 未读到 DASHSCOPE_MODEL / DASHSCOPE_API_KEY，跳过模型自检"
-fi
+}
 
 # 认证头走 curl 的 -K 配置文件，不进命令行：否则 ps / systemctl status / journal
 # 都会把 key 原样照下来（比赛后请把 key 轮换一次）。
@@ -164,6 +181,13 @@ else
                 break
                 ;;
             ""|000|"0")
+                # 配了备份模型时不要死等 300 秒：代理真挂了还要等 5 分钟才出画面，
+                # 现场体验极差。等满 WAIT_NET_PRIMARY（默认 120s）就先起备份模型。
+                if [ -n "${LLM_FALLBACK_MODEL:-}" ] \
+                        && [ "$elapsed" -ge "${WAIT_NET_PRIMARY:-120}" ]; then
+                    log "!! 等代理 ${elapsed}s 仍不通，先用备份模型启动（日志会记录切换）"
+                    break
+                fi
                 if [ "$elapsed" -ge "$WAIT_NET" ]; then
                     log "!! 等了 ${elapsed}s 仍连不通（curl 状态码 000）：继续启动，但 LLM 很可能一直失败"
                     log "!!   先查 mihomo 节点/订阅，再查 .env 里那三行 PROXY"
@@ -179,6 +203,10 @@ else
         esac
     done
 fi
+
+# 网络确定可用（或已经等满 WAIT_NET）之后，再判定主模型能不能生成；
+# 失败才切备份。这样冷启动时不会再因为“端口在监听、隧道未就绪”误切千问。
+run_model_selfcheck
 
 # 顺手记一条网络自检：放后台跑。它要访问几个第三方探针（ipinfo/ipify…），最慢能花 1 分钟，
 # 同步跑会把「上电 → 主程序就绪」拖长，冷启动演练时最不该等这个。结果照样留在
