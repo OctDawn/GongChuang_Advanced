@@ -555,61 +555,65 @@ class PushController:
             return
 
         object_name = self._object_name(color, shape, label)
-        display_image = (frames[DISPLAY_VIEW_INDEX]
-                         if len(frames) > DISPLAY_VIEW_INDEX else None)
         # 先回包再去裁缩略图：回包延迟直接影响 15 秒计时，裁图只影响 v 那一下。
         self.send_queue.put(f"{category}\n")
         logger.info("阶段 2 结果: color=%s shape=%s label=%s category=%d", color, shape, label, category)
         self.pending_display_row = (category, object_name,
-                                    self._thumb(display_image) if display_image is not None else None)
+                                    self._thumb(frames[DISPLAY_VIEW_INDEX])
+                                    if len(frames) > DISPLAY_VIEW_INDEX else None)
 
     # ---- 表格缩略图 ----
-    # 原图 720x720 里物体常只占一小块，四周全是支架/反光/背景。这里用形状模型给出的
-    # 检测框把主体裁出来，再补成正方形；没检出框或框不合理时退回中心 62% 裁剪。
+    # ① 号视角的 720x720 里，物体基本居中，四周是托架/橙色底板/白色边框。
+    # 实测（2026-11-26 真实采集）：中心裁 68% 比用形状模型框更干净也更稳——
+    # 单帧检测常把托架/背景框进去，甚至整个漏检，反而比固定区域差。
+    # ③ 底视全黑、④ 基本对着支架，都不能当缩略图。
     THUMB_SIZE = 320
-    THUMB_MARGIN = 0.18        # 框外再留 18% 边，避免口沿/尖顶被切
-    THUMB_MIN_SIDE = 0.06      # 框小于画面 6% 视为误检
+    THUMB_CENTER_RATIO = 0.68   # 中心裁剪边长占比（0.68 时物体基本占满 2/3）
+    THUMB_SHIFT = True          # 用检测框把窗口朝物体平移（不改大小）
+    THUMB_CONF = 0.20
+    THUMB_MIN_SIDE = 0.08
+    THUMB_MAX_AREA = 0.80
+
+    def _thumb_anchor(self, frame):
+        """返回检测框中心；没有可信框就返回 None。只用来平移窗口，不用来缩放。"""
+        if not self.THUMB_SHIFT or self.yolo_fallback is None:
+            return None
+        try:
+            points, _, scores = self.yolo_fallback.shape_runner.infer(
+                frame, return_scores=True)
+        except Exception as error:
+            logger.warning("缩略图取框失败，用居中裁剪: %s", error)
+            return None
+        h, w = frame.shape[:2]
+        best = None
+        for poly, score in zip(points, scores):
+            if float(score) < self.THUMB_CONF:
+                continue
+            pts = np.asarray(poly, np.float32).reshape(-1, 2)
+            x1, y1 = pts.min(axis=0)
+            x2, y2 = pts.max(axis=0)
+            bw, bh = x2 - x1, y2 - y1
+            if bw < self.THUMB_MIN_SIDE * w or bh < self.THUMB_MIN_SIDE * h:
+                continue
+            if bw * bh > self.THUMB_MAX_AREA * w * h:
+                continue
+            if best is None or bw * bh > best[0]:
+                best = (bw * bh, ((x1 + x2) / 2.0, (y1 + y2) / 2.0))
+        return best[1] if best else None
 
     def _thumb(self, frame):
+        """表格缩略图：① 号视角裁 68%，窗口按检测框中心平移（不改尺寸）。"""
         if frame is None or getattr(frame, "size", 0) == 0:
             return None
         h, w = frame.shape[:2]
-        x1 = y1 = x2 = y2 = None
-        if self.yolo_fallback is not None:
-            try:
-                points, _, scores = self.yolo_fallback.shape_runner.infer(
-                    frame, return_scores=True)
-                if len(points):
-                    best = int(np.argmax(scores))
-                    poly = np.asarray(points[best], np.float32).reshape(-1, 2)
-                    bx1, by1 = poly.min(axis=0)
-                    bx2, by2 = poly.max(axis=0)
-                    if (bx2 - bx1) >= self.THUMB_MIN_SIDE * w \
-                            and (by2 - by1) >= self.THUMB_MIN_SIDE * h:
-                        x1, y1, x2, y2 = bx1, by1, bx2, by2
-            except Exception as error:      # NPU 偶发失败不应影响出件
-                logger.warning("缩略图取框失败，改中心裁剪: %s", error)
-
-        if x1 is None:
-            side = int(min(h, w) * 0.62)
-            x1, y1 = (w - side) // 2, (h - side) // 2
-            x2, y2 = x1 + side, y1 + side
-        else:
-            side = max(x2 - x1, y2 - y1) * (1 + 2 * self.THUMB_MARGIN)
-            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-            x1, y1 = int(round(cx - side / 2)), int(round(cy - side / 2))
-            x2, y2 = int(round(cx + side / 2)), int(round(cy + side / 2))
-            if x1 < 0:
-                x2 -= x1; x1 = 0
-            if y1 < 0:
-                y2 -= y1; y1 = 0
-            if x2 > w:
-                x1 -= x2 - w; x2 = w
-            if y2 > h:
-                y1 -= y2 - h; y2 = h
-            x1, y1 = max(0, x1), max(0, y1)
-
-        crop = frame[int(y1):int(y2), int(x1):int(x2)]
+        side = int(min(h, w) * self.THUMB_CENTER_RATIO)
+        cx, cy = w / 2.0, h / 2.0
+        anchor = self._thumb_anchor(frame)
+        if anchor is not None:
+            cx, cy = anchor
+        x1 = int(round(min(max(cx - side / 2.0, 0), w - side)))
+        y1 = int(round(min(max(cy - side / 2.0, 0), h - side)))
+        crop = frame[y1:y1 + side, x1:x1 + side]
         if crop.size == 0:
             return frame.copy()
         return cv2.resize(crop, (self.THUMB_SIZE, self.THUMB_SIZE),
